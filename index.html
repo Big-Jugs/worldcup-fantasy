@@ -1885,11 +1885,22 @@ function wcf13Fixture(playerId,round=state.round){
  const p=byId[playerId];if(!p)return null;
  return wcf13.fixtures.find(f=>Number(f.round_number)===Number(round)&&[f.home_code,f.away_code].includes(p.nation))||null;
 }
-function wcf13PlayerIsLocked(id,round=state.round){
+function wcf13KnockoutConfirmed(round=state.round){
+ if(round!==4&&round!==5)return false;
+ const rows=wcf13.fixtures.filter(f=>Number(f.round_number)===Number(round));
+ if(rows.length!==(round===4?2:1))return false;
+ return rows.every(f=>f.kickoff_at&&Number.isFinite(Date.parse(f.kickoff_at))&&
+  f.home_code&&f.away_code&&f.home_code!==f.away_code&&
+  !['TBA','TBC'].includes(f.home_code)&&!['TBA','TBC'].includes(f.away_code));
+}
+function wcf13PlayerIsLocked(id,round=state.round,forAddition=false){
  if(!id)return false;
  const fixture=wcf13Fixture(id,round);
- // Unassigned knockout nations fail closed. Server also rejects these changes.
- if(!fixture||!fixture.kickoff_at)return true;
+ if(!fixture||!fixture.kickoff_at){
+  // Outgoing players from eliminated nations may be sold in a CONFIRMED
+  // knockout round. Acquiring an eliminated player stays prohibited.
+  return !(round>=4&&!forAddition&&wcf13KnockoutConfirmed(round));
+ }
  return wcf13Clock()>=Date.parse(fixture.kickoff_at);
 }
 function wcf13CaptainIsLocked(round=state.round){
@@ -1904,7 +1915,7 @@ function wcf13CanChange(before,after,round=state.round){
  }
  for(let i=0;i<21;i++){
   const old=before.slots[i],now=after.slots[i];if(old===now)continue;
-  if((old&&wcf13PlayerIsLocked(old,round))||(now&&wcf13PlayerIsLocked(now,round))){
+  if((old&&wcf13PlayerIsLocked(old,round,false))||(now&&wcf13PlayerIsLocked(now,round,true))){
    const id=old&&wcf13PlayerIsLocked(old,round)?old:now;
    toast((byId[id]?.name||'That player')+' is locked for this round.',true);return false;
   }
@@ -1989,11 +2000,11 @@ function wcf13Decorate(){
   el.querySelectorAll('[data-action="captain"],[data-action="vice"]').forEach(b=>{b.disabled=captainLocked;b.title=captainLocked?'Captaincy closed at first kickoff':b.title;});
  });
  document.querySelectorAll('.player[data-id]').forEach(el=>{
-  el.classList.toggle('wcf13-locked-player',wcf13PlayerIsLocked(el.dataset.id));
+  el.classList.toggle('wcf13-locked-player',wcf13PlayerIsLocked(el.dataset.id,state.round,true));
  });
  // Player market ADD controls remain visible but cannot select teams already kicked off.
  document.querySelectorAll('button[data-action="pick"]').forEach(b=>{
-  if(wcf13PlayerIsLocked(b.dataset.id)){
+  if(wcf13PlayerIsLocked(b.dataset.id,state.round,true)){
    b.disabled=true;b.title='Fixture started: player no longer available this round';
   }
  });
@@ -2041,6 +2052,127 @@ setInterval(()=>{if(document.visibilityState==='visible'&&mpConfigured()){
 }},60000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&mpConfigured())void wcf13FetchSchedule();});
 render();
+</script><script id="wcf-v814-pricing-script">
+/* World Cup Fantasy v8.14: settled player prices and genuine cash balances.
+   Supabase is authoritative for price and cash, never the browser. */
+const wcf14={loaded:false,loading:false,cash:null,serverByRound:{},priceHistory:{},lastRefresh:null,error:''};
+function wcf14SavedSlots(round=state.round){
+ if(wcf14.serverByRound[round])return wcf14.serverByRound[round];
+ for(let r=round-1;r>=1;r--)if(wcf14.serverByRound[r])return wcf14.serverByRound[r];
+ return Array(21).fill(null);
+}
+function wcf14CashAtDraft(round=state.round){
+ if(!Number.isFinite(wcf14.cash))return null;
+ const oldSlots=new Set(wcf14SavedSlots(round).filter(Boolean));
+ const newSlots=new Set((getLineup(currentTeam(),round)?.slots||[]).filter(Boolean));
+ let cash=wcf14.cash;
+ for(const id of oldSlots)if(!newSlots.has(id))cash+=byId[id]?.price||0;
+ for(const id of newSlots)if(!oldSlots.has(id))cash-=byId[id]?.price||0;
+ return cash;
+}
+async function wcf14RefreshMarket(){
+ if(!mp.active||!mp.team||wcf14.loading)return;
+ wcf14.loading=true;
+ try{
+  const id=encodeURIComponent(mp.team.id);
+  const [market,wallet,lineups,settlements,roundStatus]=await Promise.all([
+   mpRequest('/rest/v1/wcf_players?select=id,price&market_eligible=eq.true'),
+   mpRequest('/rest/v1/wcf_team_wallet?select=balance&team_id=eq.'+id),
+   mpRequest('/rest/v1/wcf_lineups?select=round_number,slots,captain,vice_captain&team_id=eq.'+id),
+   mpRequest('/rest/v1/rpc/wcf_price_round_status','POST',{},false),
+   mpRequest('/rest/v1/wcf_rounds?select=round_number,status')
+  ]);
+  if(!Array.isArray(market)||market.length!==140)throw Error('Market pricing feed incomplete');
+  if(!Array.isArray(wallet)||!Number.isFinite(Number(wallet[0]?.balance)))throw Error('Cash wallet unavailable');
+  for(const row of market){const p=byId[row.id];if(p&&Number.isInteger(row.price))p.price=row.price;}
+  wcf14.cash=Number(wallet[0].balance);
+  wcf14.serverByRound={};for(const l of lineups||[])if(Array.isArray(l.slots))wcf14.serverByRound[Number(l.round_number)]=l.slots;
+  // Refresh authoritative reopening state and carried-forward R2/R3 squads.
+  // Never overwrite a pending or currently saving user draft.
+  if(!Array.isArray(roundStatus))throw Error('Round status unavailable');
+  mp.allowedRounds=new Set(roundStatus.filter(x=>x.status==='open').map(x=>Number(x.round_number)));
+  mp.lastScoredRound=Math.max(0,...roundStatus.filter(x=>x.status==='scored').map(x=>Number(x.round_number)));
+  if(typeof wcfRoundGateApply==='function')wcfRoundGateApply(roundStatus);
+  if(!mp.pending&&!mp.saving&&mp.team){
+   const own=currentTeam();
+   for(const l of lineups||[])if(Array.isArray(l.slots)&&l.slots.length===21){
+    own.rounds[Number(l.round_number)]={slots:l.slots,captain:l.captain,vice:l.vice_captain};
+   }
+  }
+  wcf14.settlements=Array.isArray(settlements)?settlements:[];
+  wcf14.loaded=true;wcf14.error='';wcf14.lastRefresh=Date.now();
+ }catch(err){wcf14.loaded=false;wcf14.error=String(err.message||err);console.warn('Live market prices unavailable:',wcf14.error);}
+ finally{wcf14.loading=false;render();}
+}
+const wcf14OldCheckLegal=checkLegal;
+checkLegal=function(line,slot,id){
+ if(!mp.active)return wcf14OldCheckLegal(line,slot,id);
+ const p=byId[id];if(!p)return false;
+ if(slot<13&&!p.pos.includes(SLOT_POS[slot]))return wcf14OldCheckLegal(line,slot,id);
+ if(!wcf14.loaded){toast('Checking live player prices and cash. Please wait.',true);return false;}
+ const target=line.slots.slice();target[slot]=id;
+ // Preview all unsaved squad changes relative to the last confirmed lineup.
+ const server=new Set(wcf14SavedSlots().filter(Boolean)),current=new Set(target.filter(Boolean));
+ let balance=wcf14.cash;
+ for(const p of server)if(!current.has(p))balance+=byId[p]?.price||0;
+ for(const p of current)if(!server.has(p))balance-=byId[p]?.price||0;
+ if(balance<0){toast('Not enough available cash for this player ('+shortDollar(-balance)+' short).',true);return false;}
+ return true;
+};
+// The original V7 browser validation summed today's market prices against
+// the ORIGINAL $11m cap. That would illegally block retained premium squads
+// after a price rise. In online mode, trust the wallet and server RPC instead.
+const wcf14OldMutate=mutateLine;
+mutateLine=function(fn){
+ if(!mp.active)return wcf14OldMutate(fn);
+ if(editLocked()){toast('This round is closed.',true);return false;}
+ if(!wcf14.loaded){toast('Live pricing is still loading. Try again shortly.',true);return false;}
+ const team=currentTeam(),before=JSON.parse(JSON.stringify(lineup())),after=JSON.parse(JSON.stringify(before));
+ fn(after);
+ if(!wcf13CanChange(before,after))return false;
+ const ids=after.slots.filter(Boolean);
+ if(new Set(ids).size!==ids.length){toast('A player cannot occupy two squad positions.',true);return false;}
+ if(ids.some(id=>!MARKET_IDS.has(id))){toast('That player is unavailable.',true);return false;}
+ for(let i=0;i<13;i++)if(after.slots[i]&&!byId[after.slots[i]].pos.includes(SLOT_POS[i])){
+  toast('Player cannot play that starting position.',true);return false;
+ }
+ const oldSet=new Set(wcf14SavedSlots().filter(Boolean)),newSet=new Set(ids);
+ let bank=wcf14.cash;
+ for(const id of oldSet)if(!newSet.has(id))bank+=byId[id]?.price||0;
+ for(const id of newSet)if(!oldSet.has(id))bank-=byId[id]?.price||0;
+ if(bank<0){toast('Insufficient cash for this squad change.',true);return false;}
+ team.rounds[state.round]=after;
+ save();render();return true;
+};
+const wcf14OldLoad=mpLoadAccount;
+mpLoadAccount=async function(...args){
+ const result=await wcf14OldLoad(...args);if(mp.active)await wcf14RefreshMarket();return result;
+};
+const wcf14OldFlush=mpFlush;
+mpFlush=async function(...args){
+ const result=await wcf14OldFlush(...args);
+ if(mp.active)await wcf14RefreshMarket();
+ return result;
+};
+const wcf14OldRender=render;
+render=function(){
+ wcf14OldRender();
+ if(!mp.active||tab!=='team')return;
+ const salary=Array.from(document.querySelectorAll('.wcf-hero-metric')).find(el=>el.querySelector('.wcf-metric-label')?.textContent==='SALARY REMAINING');
+ if(!salary)return;
+ const amt=salary.querySelector('.wcf-metric-value');const caption=salary.querySelector('.wcf-metric-caption');
+ const projected=wcf14CashAtDraft();
+ if(amt)amt.textContent=projected===null?'…':shortDollar(projected);
+ if(caption)caption.textContent=wcf14.loaded?'Current market cash · squad value '+shortDollar(spent(lineup())):'Checking cash balance';
+};
+void wcf14RefreshMarket();
+// Prices do not move live during games; they are published only when the round
+// settles. A brief background check keeps open pages in sync after reopening.
+setInterval(()=>{if(mp.active&&document.visibilityState==='visible'&&
+ (wcf14.lastRefresh===null||Date.now()-wcf14.lastRefresh>5*60*1000))void wcf14RefreshMarket();},60*1000);
+document.addEventListener('visibilitychange',()=>{
+ if(document.visibilityState==='visible'&&mp.active)void wcf14RefreshMarket();
+});
 </script>
 <!-- V8.13.1 hotfix: server-driven navigation; disabled future rounds stay visible. -->
 <style id="wcf-round-nav-gate-style">
