@@ -2055,14 +2055,21 @@ render();
 </script><script id="wcf-v814-pricing-script">
 /* World Cup Fantasy v8.14: settled player prices and genuine cash balances.
    Supabase is authoritative for price and cash, never the browser. */
-const wcf14={loaded:false,loading:false,cash:null,serverByRound:{},priceHistory:{},lastRefresh:null,error:''};
+const wcf14={loaded:false,loading:false,cash:null,serverByRound:{},priceHistory:{},lastRefresh:null,error:'',
+ loadedForTeam:null,retryFailures:0,retryAfter:0};
+// The original V8.14 market fetch could run before the cached account finished
+// loading. An early return left the editor disabled until a manual refresh.
+// Also never use cash fetched for a previous signed-in account.
+function wcf14MarketReady(){
+ return !!(mp.active&&mp.team&&wcf14.loaded&&wcf14.loadedForTeam===String(mp.team.id));
+}
 function wcf14SavedSlots(round=state.round){
  if(wcf14.serverByRound[round])return wcf14.serverByRound[round];
  for(let r=round-1;r>=1;r--)if(wcf14.serverByRound[r])return wcf14.serverByRound[r];
  return Array(21).fill(null);
 }
 function wcf14CashAtDraft(round=state.round){
- if(!Number.isFinite(wcf14.cash))return null;
+ if(!wcf14MarketReady()||!Number.isFinite(wcf14.cash))return null;
  const oldSlots=new Set(wcf14SavedSlots(round).filter(Boolean));
  const newSlots=new Set((getLineup(currentTeam(),round)?.slots||[]).filter(Boolean));
  let cash=wcf14.cash;
@@ -2072,9 +2079,10 @@ function wcf14CashAtDraft(round=state.round){
 }
 async function wcf14RefreshMarket(){
  if(!mp.active||!mp.team||wcf14.loading)return;
+ const requestedTeamId=String(mp.team.id);
  wcf14.loading=true;
  try{
-  const id=encodeURIComponent(mp.team.id);
+  const id=encodeURIComponent(requestedTeamId);
   const [market,wallet,lineups,settlements,roundStatus]=await Promise.all([
    mpRequest('/rest/v1/wcf_players?select=id,price&market_eligible=eq.true'),
    mpRequest('/rest/v1/wcf_team_wallet?select=balance&team_id=eq.'+id),
@@ -2082,6 +2090,9 @@ async function wcf14RefreshMarket(){
    mpRequest('/rest/v1/rpc/wcf_price_round_status','POST',{},false),
    mpRequest('/rest/v1/wcf_rounds?select=round_number,status')
   ]);
+  // An account switch while requests are in flight must not apply another
+  // coach's wallet or saved lineup to the new account.
+  if(!mp.active||String(mp.team?.id)!==requestedTeamId)throw Error('Account changed during market refresh');
   if(!Array.isArray(market)||market.length!==140)throw Error('Market pricing feed incomplete');
   if(!Array.isArray(wallet)||!Number.isFinite(Number(wallet[0]?.balance)))throw Error('Cash wallet unavailable');
   for(const row of market){const p=byId[row.id];if(p&&Number.isInteger(row.price))p.price=row.price;}
@@ -2100,8 +2111,16 @@ async function wcf14RefreshMarket(){
    }
   }
   wcf14.settlements=Array.isArray(settlements)?settlements:[];
-  wcf14.loaded=true;wcf14.error='';wcf14.lastRefresh=Date.now();
- }catch(err){wcf14.loaded=false;wcf14.error=String(err.message||err);console.warn('Live market prices unavailable:',wcf14.error);}
+  wcf14.loaded=true;wcf14.loadedForTeam=requestedTeamId;
+  wcf14.error='';wcf14.lastRefresh=Date.now();
+  wcf14.retryFailures=0;wcf14.retryAfter=0;
+ }catch(err){
+  wcf14.loaded=false;wcf14.loadedForTeam=null;
+  wcf14.error=String(err.message||err);
+  wcf14.retryFailures=Math.min(wcf14.retryFailures+1,6);
+  wcf14.retryAfter=Date.now()+Math.min(30000,1000*2**wcf14.retryFailures);
+  console.warn('Live market prices unavailable:',wcf14.error);
+ }
  finally{wcf14.loading=false;render();}
 }
 const wcf14OldCheckLegal=checkLegal;
@@ -2109,7 +2128,7 @@ checkLegal=function(line,slot,id){
  if(!mp.active)return wcf14OldCheckLegal(line,slot,id);
  const p=byId[id];if(!p)return false;
  if(slot<13&&!p.pos.includes(SLOT_POS[slot]))return wcf14OldCheckLegal(line,slot,id);
- if(!wcf14.loaded){toast('Checking live player prices and cash. Please wait.',true);return false;}
+ if(!wcf14MarketReady()){toast('Checking live player prices and cash. Please wait.',true);return false;}
  const target=line.slots.slice();target[slot]=id;
  // Preview all unsaved squad changes relative to the last confirmed lineup.
  const server=new Set(wcf14SavedSlots().filter(Boolean)),current=new Set(target.filter(Boolean));
@@ -2126,7 +2145,7 @@ const wcf14OldMutate=mutateLine;
 mutateLine=function(fn){
  if(!mp.active)return wcf14OldMutate(fn);
  if(editLocked()){toast('This round is closed.',true);return false;}
- if(!wcf14.loaded){toast('Live pricing is still loading. Try again shortly.',true);return false;}
+ if(!wcf14MarketReady()){toast('Live pricing is still loading. Try again shortly.',true);return false;}
  const team=currentTeam(),before=JSON.parse(JSON.stringify(lineup())),after=JSON.parse(JSON.stringify(before));
  fn(after);
  if(!wcf13CanChange(before,after))return false;
@@ -2163,9 +2182,21 @@ render=function(){
  const amt=salary.querySelector('.wcf-metric-value');const caption=salary.querySelector('.wcf-metric-caption');
  const projected=wcf14CashAtDraft();
  if(amt)amt.textContent=projected===null?'…':shortDollar(projected);
- if(caption)caption.textContent=wcf14.loaded?'Current market cash · squad value '+shortDollar(spent(lineup())):'Checking cash balance';
+ if(caption)caption.textContent=wcf14MarketReady()?'Current market cash · squad value '+shortDollar(spent(lineup())):(wcf14.error?'Cash unavailable · retrying automatically':'Checking cash balance');
 };
-void wcf14RefreshMarket();
+// On a cold reload, the multiplayer bootstrap in an earlier script is still
+// fetching its team. Its initial load may have started BEFORE this wrapper was
+// installed, so wcf14RefreshMarket() can otherwise return without ever retrying.
+// Poll only until the current account has a verified wallet/market snapshot.
+// Failures back off to at most one request per 30 seconds.
+function wcf14EnsureInitialMarket(){
+ if(!mp.active||!mp.ready||!mp.team||wcf14.loading||wcf14MarketReady())return;
+ if(Date.now()<wcf14.retryAfter)return;
+ void wcf14RefreshMarket();
+}
+wcf14EnsureInitialMarket();
+setInterval(wcf14EnsureInitialMarket,1000);
+window.addEventListener('pageshow',wcf14EnsureInitialMarket);
 // Prices do not move live during games; they are published only when the round
 // settles. A brief background check keeps open pages in sync after reopening.
 setInterval(()=>{if(mp.active&&document.visibilityState==='visible'&&
