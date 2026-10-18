@@ -481,6 +481,20 @@ body:has(.wcf-team-hero) .teamground{min-height:472px}
 .wcf-score-pill{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;white-space:nowrap;flex-shrink:0;border-radius:5px;background:#254450;color:#c3e5ef;border:1px solid #456b7c;padding:1px 5px;min-width:27px;font-size:11px;font-weight:900;font-variant-numeric:tabular-nums;line-height:1.3;letter-spacing:0}
 .wcf-score-pill.is-live{background:#a6ffc9;color:#103b2c;border-color:#d4ffe3;box-shadow:0 0 10px #73eebb75}
 .wcf-score-pill.is-demo{background:#f3d89a;color:#49330b;border-color:#ffebb9}
+/* V8.14.3: confirmed DNPs and emergency scores excluded from a settled round. */
+.slot-filled.wcf-score-dnp{background:#192530!important;border-color:#53636c!important}
+.slot-filled.wcf-score-dnp .slot-profile .jersey-icon,.slot-filled.wcf-score-dnp .slot-profile .portrait{filter:grayscale(1);opacity:.56}
+.slot-filled.wcf-score-dnp .slot-name{color:#98a7ad!important}
+.slot-filled.wcf-score-dnp .slot-bottom{color:#8e9da5!important}
+.slot-filled .wcf-score-pill.is-dnp{color:#e0e6e9;background:#39444d;border-color:#77838b;box-shadow:none;font-size:10px}
+.slot-filled.wcf-score-unused .slot-profile{opacity:.72}
+.slot-filled .wcf-score-pill.is-not-counted{color:#a4b1b9;background:#28313b;border-color:#485762;box-shadow:none;opacity:.76}
+.slot-filled.wcf-score-unused .wcf-score-pill.is-not-counted{font-weight:750}
+@media(max-width:640px){
+ .slot-filled.wcf-score-dnp .slot-profile .jersey-icon,.slot-filled.wcf-score-dnp .slot-profile .portrait{filter:grayscale(1);opacity:.52!important}
+ .slot-filled .wcf-score-pill.mobile-score-pill.is-dnp{font-size:9px!important;min-width:25px;padding:2px 3px}
+}
+
 .slot-filled.wcf-score-is-live{border-color:#c7ffda!important;background:linear-gradient(135deg,#285e4c,#194537)!important;box-shadow:inset 0 0 0 1px #95eac188,0 0 13px #43d79444!important}
 .slot-filled.wcf-score-is-live .slot-name{color:#f9fff9}
 .slot-filled .slot-name-row{gap:4px;align-items:center;min-width:0}
@@ -1676,15 +1690,74 @@ function statusHtml(){
  else if(!scoreFeed.demo&&scoreFeed.data&&Object.values(scoreFeed.data.rounds?.[String(state.round)]?.matches||{}).some(m=>m.status==='live'))txt='Scores may be delayed';
  return `<span class="wcf-score-feed-indicator ${live?'is-live':status==='demo'?'is-demo':status==='error'?'is-error':''}" title="${esc(scoreFeed.error||'Fantasy points are provisional until official publication. Source connection is separate from team lists.')}" aria-live="polite"><span class="wcf-score-dot"></span>${txt}</span>`;
 }
-function scoreTag(item){return `<span class="wcf-score-pill ${item.status==='live'?'is-live':''} ${scoreFeed.demo?'is-demo':''}" title="${scoreFeed.demo?'DEMO — fictional points':item.status==='live'?'Provisional live fantasy score':'Final match fantasy score'}">${item.points}</span>`;}
+/* This is a display-only mirror of wcf_recalculate_scores() for completed rounds.
+   The server remains authoritative. If the browser-derived points disagree with
+   its settled round total, do not guess which emergency's points were counted. */
+function wcf143RoundAttribution(round=state.round){
+ const result={ready:false,canMarkUnused:false,counted:new Set(),dnp:new Set(),computed:null};
+ if(!mp.active||!mp.team||!scoreFeed.data)return result;
+ // Final matches may have a published provisional team total during the
+ // mandatory 16-hour settlement wait. Match the server total before labelling
+ // exclusions; do not require the whole round to be formally settled.
+ const publishedRound=mp.roundScores?.[round];
+ if(!publishedRound||!Number.isFinite(Number(publishedRound.points)))return result;
+ const matches=Object.values(scoreFeed.data.rounds?.[String(round)]?.matches||{});
+ const expected=F.filter(f=>f[1]===round).length;
+ if(!expected||matches.length!==expected||matches.some(m=>m.status!=='final'))return result;
+ const l=getLineup(currentTeam(),round);
+ if(!l||!Array.isArray(l.slots)||l.slots.length!==21)return result;
+ const entries=new Map();
+ for(const m of matches){
+  for(const [id,entry] of Object.entries(m.players||{}))entries.set(id,entry);
+ }
+ const didPlay=id=>!!id&&entries.has(id)&&entries.get(id).played!==false;
+ const used=new Set();let total=0;
+ const captainDnp=!!l.captain&&!didPlay(l.captain);
+ for(let i=0;i<17;i++){
+  const original=l.slots[i];if(!original)continue;
+  let selected=original;
+  if(!didPlay(original)){
+   for(let k=17;k<21;k++){
+    const reserve=l.slots[k];
+    if(!reserve||used.has(reserve)||!didPlay(reserve))continue;
+    if(i<13&&!byId[reserve]?.pos.includes(SLOT_POS[i]))continue;
+    selected=reserve;used.add(reserve);break;
+   }
+  }
+  if(!didPlay(selected))continue;
+  const points=Number(entries.get(selected).points);
+  if(!Number.isFinite(points))return result;
+  result.counted.add(selected);
+  total+=points*((selected===l.captain||(captainDnp&&selected===l.vice))?2:1);
+ }
+ for(const id of l.slots)if(id&&!didPlay(id))result.dnp.add(id);
+ result.ready=true;result.computed=total;
+ // A browser snapshot might lag corrections held in authoritative Supabase.
+ // Use exclusion labels only after independently matching the published total.
+ result.canMarkUnused=Number(publishedRound.points)===total;
+ return result;
+}
+function scoreTag(item,options={}){
+ const dnp=!!options.dnp,excluded=!!options.excluded;
+ const description=dnp?'Confirmed DNP: did not play; zero points credited':excluded?'Points excluded from this round total':scoreFeed.demo?'DEMO — fictional points':item.status==='live'?'Provisional live fantasy score':'Final match fantasy score';
+ return `<span class="wcf-score-pill ${dnp?'is-dnp':excluded?'is-not-counted':item.status==='live'?'is-live':''} ${scoreFeed.demo?'is-demo':''}" title="${description}" aria-label="${description}">${dnp?'DNP':item.points}</span>`;
+}
 function patchScoreTiles(){
  if(tab!=='team')return;
+ const attribution=wcf143RoundAttribution();
  const elements=document.querySelectorAll('.slot-filled');
  for(const el of elements){
-  const profile=el.querySelector('.slot-profile[data-id]');const id=profile?.dataset.id;const item=id?scoreFor(id):null;
-  if(!item)continue;
-  if(item.status==='live')el.classList.add('wcf-score-is-live');
-  const n=el.querySelector('.slot-name-row');if(n)n.insertAdjacentHTML('beforeend',scoreTag(item));
+  const profile=el.querySelector('.slot-profile[data-id]');const id=profile?.dataset.id;
+  if(!id)continue;
+  const item=scoreFor(id);
+  const dnp=attribution.ready&&attribution.dnp.has(id);
+  const excluded=attribution.canMarkUnused&&!attribution.counted.has(id)&&!dnp;
+  if(!item&&!dnp)continue;
+  if(dnp){el.classList.add('wcf-score-dnp');el.setAttribute('data-score-status','DNP');}
+  else if(excluded){el.classList.add('wcf-score-unused');el.setAttribute('data-score-status','not-counted');}
+  else if(item?.status==='live')el.classList.add('wcf-score-is-live');
+  const n=el.querySelector('.slot-name-row');
+  if(n)n.insertAdjacentHTML('beforeend',scoreTag(item||{status:'final',points:0},{dnp,excluded}));
  }
  const right=document.querySelector('.team-header-right');
  if(right)right.insertAdjacentHTML('afterbegin',statusHtml());
