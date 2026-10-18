@@ -1691,7 +1691,7 @@ function patchScoreTiles(){
 }
 function patchHeaderPoints(){
  if(tab!=='team')return;
- if(mp.active && Number(mp.lastScoredRound||0)>=state.round)return; // Published server result wins.
+ if(mp.active)return; // Supabase is always authoritative for signed-in teams, including provisional round points.
  const summary=liveSummary();if(!summary)return;
  const metrics=Array.from(document.querySelectorAll('.wcf-hero-metric'));
  const round=metrics.find(x=>/^(R[1-3]|SF|FINAL) SCORE$/.test(x.querySelector('.wcf-metric-label')?.textContent?.trim()||''));
