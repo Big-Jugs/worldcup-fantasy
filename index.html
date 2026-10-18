@@ -490,6 +490,15 @@ body:has(.wcf-team-hero) .teamground{min-height:472px}
 .slot-filled.wcf-score-unused .slot-profile{opacity:.72}
 .slot-filled .wcf-score-pill.is-not-counted{color:#a4b1b9;background:#28313b;border-color:#485762;box-shadow:none;opacity:.76}
 .slot-filled.wcf-score-unused .wcf-score-pill.is-not-counted{font-weight:750}
+/* V8.14.4: the score badge shows the points actually credited to a captain.
+   Gold deliberately matches the selected captain control (#ffcf7a). */
+.slot-filled .wcf-score-pill.is-captain-double,
+.slot-filled .wcf-score-pill.is-captain-double.is-live,
+.slot-filled .wcf-score-pill.is-captain-double.is-demo{
+ background:#ffcf7a;color:#3b2a09;border-color:#ffcf7a;
+ box-shadow:0 0 0 1px #ffdf9c45;font-weight:950;
+}
+
 @media(max-width:640px){
  .slot-filled.wcf-score-dnp .slot-profile .jersey-icon,.slot-filled.wcf-score-dnp .slot-profile .portrait{filter:grayscale(1);opacity:.52!important}
  .slot-filled .wcf-score-pill.mobile-score-pill.is-dnp{font-size:9px!important;min-width:25px;padding:2px 3px}
@@ -1737,10 +1746,28 @@ function wcf143RoundAttribution(round=state.round){
  result.canMarkUnused=Number(publishedRound.points)===total;
  return result;
 }
+/* Visual multiplier only: Supabase already includes captaincy bonuses in the round
+   total. Use the saved captain for the selected round, not the current-round
+   captain when looking back at an earlier lineup. */
+function wcf144ScoreMultiplier(id,item,attribution,round=state.round){
+ if(!item||item.played===false)return null;
+ const l=getLineup(currentTeam(),round);
+ if(!l)return null;
+ if(attribution.canMarkUnused&&!attribution.counted.has(id))return null;
+ if(l.captain===id)return 'captain';
+ // A vice-captain earns double only if the captain is confirmed DNP after
+ // all fixtures are final and the feed reconciles with the official total.
+ if(l.vice===id&&attribution.ready&&attribution.canMarkUnused&&
+    attribution.dnp.has(l.captain)&&attribution.counted.has(id))return 'vice';
+ return null;
+}
 function scoreTag(item,options={}){
  const dnp=!!options.dnp,excluded=!!options.excluded;
- const description=dnp?'Confirmed DNP: did not play; zero points credited':excluded?'Points excluded from this round total':scoreFeed.demo?'DEMO — fictional points':item.status==='live'?'Provisional live fantasy score':'Final match fantasy score';
- return `<span class="wcf-score-pill ${dnp?'is-dnp':excluded?'is-not-counted':item.status==='live'?'is-live':''} ${scoreFeed.demo?'is-demo':''}" title="${description}" aria-label="${description}">${dnp?'DNP':item.points}</span>`;
+ const role=!dnp&&!excluded&&(options.multiplier==='captain'||options.multiplier==='vice')?options.multiplier:null;
+ const points=Number(item.points);
+ const credited=role?points*2:points;
+ const description=dnp?'Confirmed DNP: did not play; zero points credited':excluded?'Points excluded from this round total':role?`${role==='captain'?'Captain':'Vice-captain (captain DNP)'} double points: ${points} × 2 = ${credited}`:scoreFeed.demo?'DEMO — fictional points':item.status==='live'?'Provisional live fantasy score':'Final match fantasy score';
+ return `<span class="wcf-score-pill ${dnp?'is-dnp':excluded?'is-not-counted':role?'is-captain-double':item.status==='live'?'is-live':''} ${scoreFeed.demo?'is-demo':''}" title="${description}" aria-label="${description}"${role?' data-score-multiplier="2"':''}>${dnp?'DNP':credited}</span>`;
 }
 function patchScoreTiles(){
  if(tab!=='team')return;
@@ -1757,7 +1784,7 @@ function patchScoreTiles(){
   else if(excluded){el.classList.add('wcf-score-unused');el.setAttribute('data-score-status','not-counted');}
   else if(item?.status==='live')el.classList.add('wcf-score-is-live');
   const n=el.querySelector('.slot-name-row');
-  if(n)n.insertAdjacentHTML('beforeend',scoreTag(item||{status:'final',points:0},{dnp,excluded}));
+  if(n)n.insertAdjacentHTML('beforeend',scoreTag(item||{status:'final',points:0},{dnp,excluded,multiplier:wcf144ScoreMultiplier(id,item,attribution)}));
  }
  const right=document.querySelector('.team-header-right');
  if(right)right.insertAdjacentHTML('afterbegin',statusHtml());
