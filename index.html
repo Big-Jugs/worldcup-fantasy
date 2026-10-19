@@ -2385,4 +2385,251 @@ changeRound=function(round){
  render();
 };
 </script>
+
+<style id="wcf145-historical-viewer-style">
+/* V8.14.5 read-only ladder -> historical team viewer */
+.wcf145-ladder-link{padding:0;border:0;background:none;color:#d0ffeb;font-weight:850;font-size:inherit;cursor:pointer;text-align:left;text-decoration:underline;text-decoration-color:#589a81;text-underline-offset:3px}
+.wcf145-ladder-link:hover,.wcf145-ladder-link:focus-visible{color:#a3ffd1;text-decoration-color:#a3ffd1}
+.wcf145-head{align-items:center;flex-wrap:wrap;gap:14px}
+.wcf145-head>div:first-child{display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0}
+.wcf145-head h3{font-size:18px;overflow-wrap:anywhere}
+.wcf145-roundnav{display:flex;align-items:center;flex-wrap:wrap;gap:9px;padding:13px 18px;border-bottom:1px solid #36505b;background:#102831}
+.wcf145-roundnav>span{font-size:11px;font-weight:850;color:#adcac5}
+.wcf145-rounds{display:flex;flex-wrap:wrap;gap:6px}
+.wcf145-rounds .btn:disabled{opacity:.52}
+.wcf145-feedback{padding:32px 20px;color:#c2d7da;text-align:center;font-size:14px}
+.wcf145-scoreline{display:flex;gap:24px;align-items:center;flex-wrap:wrap;padding:16px 20px;background:#102e30;border-bottom:1px solid #345d59}
+.wcf145-scoreline>div{display:flex;flex-direction:column;gap:2px}
+.wcf145-scoreline>div>span{font-size:10px;letter-spacing:1.1px;color:#b1cccd;font-weight:800}
+.wcf145-scoreline strong{font-size:27px;color:#e8fff3;line-height:1.1}
+.wcf145-final{margin-left:auto;color:#9ef0bd;font-size:12px;font-weight:850}
+.wcf145-layout{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:16px;padding:17px}
+.wcf145-field{order:1;padding:13px 14px 20px;background:repeating-linear-gradient(0deg,rgba(145,212,175,.04) 0,rgba(145,212,175,.04) 72px,transparent 72px,transparent 144px),linear-gradient(160deg,#103b35,#0f282b);border:1px solid #356656;border-radius:12px}
+.wcf145-ground-head{display:flex;justify-content:space-between;color:#a3edcb;letter-spacing:1px;font-size:10px;padding-bottom:14px}
+.wcf145-position{margin:0 auto 13px;max-width:760px}
+.wcf145-position-title{font-size:10px;font-weight:850;color:#a2d9c4;text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
+.wcf145-position-players{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.wcf145-position-players:has(>.wcf145-tile:nth-child(2):last-child){grid-template-columns:repeat(2,minmax(0,1fr));max-width:76%;margin:auto}
+.wcf145-position-players:has(>.wcf145-tile:only-child){grid-template-columns:minmax(0,1fr);max-width:40%;margin:auto}
+.wcf145-bench{order:2;display:flex;flex-direction:column;gap:4px;padding:10px;background:#122832;border:1px solid #344e56;border-radius:12px}
+.wcf145-bench h4{margin:7px 0 0;color:#d7f3e7;font-size:11px;letter-spacing:.7px}
+.wcf145-bench p{margin:0 0 5px;font-size:10px;color:#97b6bf}
+.wcf145-bench-list{display:grid;gap:6px;margin-bottom:12px}
+.wcf145-tile{display:flex;align-items:center;min-height:61px;gap:5px;padding:6px;position:relative;min-width:0;background:#152f34;border:1px solid #50736d;border-radius:9px;color:#e6f5f0}
+.wcf145-tile.is-dnp{opacity:.66;border-color:#596875;background:#27343a}
+.wcf145-tile.is-dnp .jersey-icon{filter:grayscale(1)}
+.wcf145-tile.is-unused{opacity:.61;border-color:#46565b}
+.wcf145-tile.wcf145-empty{border-style:dashed;justify-content:center;color:#8daea8;font-size:10px}
+.wcf145-jersey{flex:0 0 34px;display:grid;place-items:center;min-width:0}
+.wcf145-jersey .jersey-icon{width:32px;height:38px;display:inline-flex;align-items:center;justify-content:center;flex:none}
+.wcf145-jersey .jersey-art{height:100%;width:100%}
+.wcf145-tile-text{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
+.wcf145-name{font-size:11px;font-weight:850;line-height:1.18;overflow-wrap:anywhere}
+.wcf145-meta{color:#9dbaba;font-size:9px;display:flex;align-items:center;gap:3px;flex-wrap:wrap}
+.wcf145-role{display:inline-block;padding:1px 4px;border-radius:4px;font-size:9px;font-weight:950;background:#ffcf7a;color:#3b2a09}
+.wcf145-role.vice{background:#a5e2ed;color:#09262d}
+.wcf145-points{flex:0 0 auto;min-width:28px;text-align:center;display:inline-block;border:1px solid #4c8070;background:#224f44;border-radius:7px;font-size:12px;font-weight:950;color:#adffd0;padding:5px 6px}
+.wcf145-points.is-doubled{background:#ffcf7a;color:#3b2a09;border-color:#ffcf7a}
+.wcf145-points.is-dnp{background:#404a51;color:#f1f3f5;border-color:#66757b;font-size:10px}
+.wcf145-points.is-unused{background:#303a44;color:#aebdc5;border-color:#4d5e67}
+.wcf145-replacements{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin:0 17px 12px;padding:12px;background:#122d33;border:1px solid #335761;border-radius:9px;font-size:11px;color:#d4e7df}
+.wcf145-replacements b{width:100%;font-size:11px;color:#a8f1cf}
+.wcf145-replacements>div{padding:4px 8px;background:#1b3940;border-radius:7px}
+.wcf145-legend{padding:9px 18px 15px;display:flex;gap:17px;flex-wrap:wrap;color:#abc8c5;font-size:11px}
+.wcf145-legend>span{display:inline-flex;align-items:center;gap:6px}
+.wcf145-key{width:12px;height:12px;display:inline-block;border-radius:3px;border:1px solid #6b8582}
+.wcf145-key.gold{background:#ffcf7a}.wcf145-key.grey{background:#4e5966}.wcf145-key.dnp{background:#7b8189}
+.wcf145-view .mp-notice{margin:0 18px 17px}
+@media(max-width:940px){.wcf145-layout{grid-template-columns:minmax(0,1fr)}.wcf145-bench{order:2}.wcf145-bench-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.wcf145-layout{padding:8px;gap:8px}.wcf145-field{padding:10px 8px}.wcf145-position-players{gap:4px}.wcf145-position-players:has(>.wcf145-tile:only-child){max-width:65%}.wcf145-position-players:has(>.wcf145-tile:nth-child(2):last-child){max-width:95%}.wcf145-tile{padding:4px 3px;min-height:58px;gap:3px;flex-wrap:wrap}.wcf145-jersey{flex-basis:24px}.wcf145-jersey .jersey-icon{width:24px;height:32px}.wcf145-name{font-size:9px}.wcf145-meta{font-size:8px}.wcf145-points{font-size:10px;min-width:24px;padding:3px 4px}.wcf145-bench-list{gap:5px}.wcf145-scoreline{gap:15px}.wcf145-scoreline strong{font-size:22px}.wcf145-final{font-size:10px}}
+/* Two-across historical tiles on phones keep player names legible. */
+@media(max-width:520px){
+ .wcf145-position-players{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .wcf145-position-players:has(>.wcf145-tile:nth-child(3):last-child)>.wcf145-tile:nth-child(3){grid-column:1/-1;justify-self:center;width:63%}
+ .wcf145-name{font-size:10px;overflow-wrap:normal;word-break:normal}
+ .wcf145-tile{min-height:62px}
+}
+
+</style>
+<script id="wcf145-historical-viewer-script">
+'use strict';
+/* V8.14.5: Public scored-round team viewer. All writes remain on My Team.
+ * The server RPC controls disclosure. Client tabs are NOT a security boundary. */
+const wcf145Viewer={teamId:null,round:1,teamName:'',data:null,loading:false,error:'',statuses:new Map(),request:0};
+const wcf145IsScored=r=>wcf145Viewer.statuses.get(Number(r))==='scored';
+function wcf145Played(d,id){
+ const entry=id&&d.player_scores&&d.player_scores[id];
+ return !!entry&&entry.played!==false&&Number.isInteger(Number(entry.points));
+}
+function wcf145Replay(d){
+ // Mirror the deployed R1-R5 scorer: STARTING slots first, then interchange;
+ // each DNP gets the FIRST eligible unused emergency IN BENCH ORDER.
+ const result={counted:new Set(),dnp:new Set(),usedEmergencies:new Set(),multipliers:new Map(),replacements:[],total:0,verified:false};
+ if(!d||!Array.isArray(d.slots)||d.slots.length!==21)return result;
+ const s=d.slots,capDnp=!!d.captain&&!wcf145Played(d,d.captain);
+ for(const id of s)if(id&&!wcf145Played(d,id))result.dnp.add(id);
+ for(let i=0;i<17;i++){
+   const id=s[i];if(!id)continue;
+   let chosen=id;
+   if(!wcf145Played(d,id)){
+     for(let j=17;j<21;j++){
+       const reserve=s[j];
+       if(!reserve||result.usedEmergencies.has(reserve)||!wcf145Played(d,reserve))continue;
+       if(i<13&&!byId[reserve]?.pos?.includes(SLOT_POS[i]))continue;
+       chosen=reserve;result.usedEmergencies.add(reserve);
+       result.replacements.push({original:id,replacement:reserve,slot:i,emergencyOrder:j-16});
+       break;
+     }
+   }
+   if(!wcf145Played(d,chosen))continue;
+   const points=Number(d.player_scores[chosen].points);
+   const double=chosen===d.captain||(capDnp&&chosen===d.vice_captain);
+   result.counted.add(chosen);
+   if(double)result.multipliers.set(chosen,chosen===d.captain?'captain':'vice');
+   result.total+=points*(double?2:1);
+ }
+ result.verified=Number(d.round_points)===result.total;
+ return result;
+}
+function wcf145Card(d,i,trace){
+ const id=d.slots[i],p=id&&byId[id],role=i<13?SLOT_POS[i]:i<17?'INT':'EMG';
+ if(!id)return `<div class="wcf145-tile wcf145-empty" aria-label="Empty ${esc(role)} position">${i<13?esc(role):'Empty'}</div>`;
+ const raw=d.player_scores?.[id];
+ const played=wcf145Played(d,id),dnp=trace.dnp.has(id);
+ const counted=trace.verified&&trace.counted.has(id);
+ const unused=trace.verified&&played&&!counted;
+ const mult=counted?trace.multipliers.get(id):null;
+ const points=played?Number(raw.points)*(mult?2:1):null;
+ const badge=dnp?'DNP':played?String(points):'—';
+ const badges=[];
+ if(d.captain===id)badges.push('<span class="wcf145-role captain">C</span>');
+ if(d.vice_captain===id)badges.push('<span class="wcf145-role vice">VC</span>');
+ const code=p?.nation||'—',position=p?.pos?.join('/')||role;
+ const description=dnp?'Did not play':unused?'Not counted in this round total':mult?`Counted double for ${mult==='captain'?'captain':'vice-captain'}: ${points} points`:counted?'Points counted':'Recorded fantasy points';
+ return `<div class="wcf145-tile ${dnp?'is-dnp':''} ${unused?'is-unused':''}" role="group" aria-label="${esc(p?.name||id)}; ${esc(description)}">
+  <div class="wcf145-jersey">${p?avatarHTML(p):'◈'}</div>
+  <div class="wcf145-tile-text"><span class="wcf145-name" title="${esc(p?.name||id)}">${esc(p?.name||id)}</span>
+  <span class="wcf145-meta">${esc(code)} · ${esc(position)} ${badges.join('')}</span></div>
+  <span class="wcf145-points ${dnp?'is-dnp':unused?'is-unused':mult?'is-doubled':''}" title="${esc(description)}">${badge}</span>
+ </div>`;
+}
+function wcf145RoundButtons(){
+ return `<div class="wcf145-rounds" role="group" aria-label="View completed fantasy rounds">${[1,2,3,4,5].map(r=>{
+  const open=wcf145IsScored(r);
+  return `<button type="button" class="btn sm ${r===wcf145Viewer.round?'primary':''}" data-action="wcf145-round" data-round="${r}" ${open?'':'disabled aria-disabled="true"'} title="${open?'View finalised '+RD_NAMES[r]:'This lineup is private until the round is settled'}">${r<=3?'R'+r:r===4?'SF':'F'}${open?'':' 🔒'}</button>`;
+ }).join('')}</div>`;
+}
+function wcf145TeamPage(){
+ const v=wcf145Viewer,d=v.data;
+ const back='<button type="button" class="btn sm" data-action="wcf145-back">← Public ladder</button>';
+ const rounds=wcf145RoundButtons();
+ const header=`<div class="card-head wcf145-head"><div>${back}<h3>${esc(d?.team_name||v.teamName)} · ${esc(RD_NAMES[v.round])}</h3>
+ <small>Read-only · public only after official round settlement</small></div><span class="pill gray">HISTORICAL TEAM</span></div>`;
+ let inner;
+ if(v.loading)inner='<div class="wcf145-feedback" role="status">Loading the settled team…</div>';
+ else if(v.error)inner=`<div class="wcf145-feedback" role="alert">${esc(v.error)}<div style="margin-top:12px"><button class="btn sm" data-action="wcf145-retry">Try again</button></div></div>`;
+ else if(!d)inner='<div class="wcf145-feedback">Choose an available completed round.</div>';
+ else{
+  const trace=wcf145Replay(d);
+  const filled=d.slots.filter(Boolean).length;
+  const noPlayers=filled===0;
+  const field=POSITION_DISPLAY.map(([pos,start,end])=>
+   `<div class="wcf145-position"><div class="wcf145-position-title">${esc(POSNAME[pos])}</div>
+    <div class="wcf145-position-players">${Array.from({length:end-start},(_,k)=>wcf145Card(d,start+k,trace)).join('')}</div></div>`).join('');
+  const rep=trace.verified&&trace.replacements.length
+   ?`<div class="wcf145-replacements"><b>Automatic DNP replacements</b>${trace.replacements.map(x=>
+    `<div>${esc(byId[x.original]?.name||x.original)} → ${esc(byId[x.replacement]?.name||x.replacement)} <span class="muted">(Emergency ${x.emergencyOrder})</span></div>`).join('')}</div>`:'';
+  inner=`<div class="wcf145-scoreline"><div><span>OFFICIAL ${esc(RD_NAMES[v.round].toUpperCase())} SCORE</span><strong>${Number(d.round_points).toLocaleString('en-AU')}</strong></div><div><span>SELECTED SQUAD</span><strong>${filled}/21</strong></div><span class="wcf145-final">✓ Final score</span></div>
+   ${noPlayers?'<div class="wcf145-feedback">This coach did not select a squad for the round.</div>':
+   `<div class="wcf145-layout"><section class="wcf145-field"><div class="wcf145-ground-head"><b>STARTING 13</b><span>RLWC '26</span></div>${field}</section>
+    <aside class="wcf145-bench"><h4>INTERCHANGE</h4><p>Four scoring bench positions</p><div class="wcf145-bench-list">${[13,14,15,16].map(i=>wcf145Card(d,i,trace)).join('')}</div>
+    <h4>EMERGENCIES</h4><p>Automatic substitutes in listed order</p><div class="wcf145-bench-list">${[17,18,19,20].map(i=>wcf145Card(d,i,trace)).join('')}</div></aside></div>
+    ${rep}<div class="wcf145-legend"><span><i class="wcf145-key gold"></i> Doubled captain/VC</span><span><i class="wcf145-key grey"></i> Unused emergency</span><span><i class="wcf145-key dnp"></i> DNP</span></div>
+    ${trace.verified?'':`<div class="mp-notice" role="note">The saved published score doesn't reconcile with this display's independent attribution. The official total above remains authoritative; excluded-point labels have been withheld.</div>`}`}
+   `;
+ }
+ return `<div class="widepage wcf145-view"><div class="card">${header}<div class="wcf145-roundnav"><span>Finished rounds:</span>${rounds}</div>${inner}</div></div>`;
+}
+function wcf145DecorateLadder(){
+ if(tab!=='leaderboard'||wcf145Viewer.teamId)return;
+ const rows=document.querySelectorAll('.mp-table tbody tr');
+ for(let i=0;i<rows.length&&i<mp.ladder.length;i++){
+  const team=mp.ladder[i],cell=rows[i].querySelector('td:nth-child(2)'),label=cell?.querySelector('b');
+  if(!label||!team?.team_id)continue;
+  const btn=document.createElement('button');
+  btn.type='button';btn.className='wcf145-ladder-link';
+  btn.dataset.action='wcf145-open';btn.dataset.teamId=team.team_id;
+  btn.dataset.teamName=team.team_name;btn.textContent=team.team_name;
+  btn.setAttribute('aria-label','View '+team.team_name+' completed-round lineup');
+  label.replaceWith(btn);
+ }
+}
+async function wcf145LoadStatuses(){
+ const rows=await mpRequest('/rest/v1/wcf_rounds?select=round_number,status','GET',null);
+ if(!Array.isArray(rows))throw Error('Round statuses are currently unavailable.');
+ wcf145Viewer.statuses=new Map(rows.map(x=>[Number(x.round_number),x.status]));
+}
+async function wcf145Load(round){
+ const v=wcf145Viewer,id=v.teamId,token=++v.request;
+ if(!id||!wcf145IsScored(round))return;
+ v.round=round;v.loading=true;v.data=null;v.error='';render();
+ try{
+  const d=await mpRequest('/rest/v1/rpc/wcf_public_scored_lineup','POST',{p_team_id:id,p_round:round});
+  if(token!==v.request||v.teamId!==id)return;
+  if(!d||Number(d.round_number)!==round||d.team_id!==id||!Array.isArray(d.slots)||d.slots.length!==21||!Number.isInteger(Number(d.round_points)))throw Error('Invalid historical-team data received.');
+  v.data=d;
+ }catch(e){
+  if(token!==v.request||v.teamId!==id)return;
+  v.error=/not public|permission denied|not found|404/i.test(e.message)?'This round’s team is not available for public viewing yet.':e.message;
+ }finally{if(token===v.request&&v.teamId===id){v.loading=false;render();}}
+}
+async function wcf145Open(teamId,teamName){
+ const v=wcf145Viewer;
+ // Use the names/UUIDs already returned by the public ladder; never derive
+ // an opponent lineup from the signed-in coach's local team state.
+ if(!mp.ladder.some(e=>e.team_id===teamId))return;
+ v.teamId=teamId;v.teamName=teamName;v.data=null;v.error='';v.loading=true;
+ const token=++v.request;tab='leaderboard';render();
+ try{
+   await wcf145LoadStatuses();
+   if(token!==v.request||v.teamId!==teamId)return;
+   const allowed=[...v.statuses.entries()].filter(([r,s])=>s==='scored'&&r>=1&&r<=5).map(([r])=>r);
+   if(!allowed.length){v.error='No rounds have been finalised for public viewing yet.';v.loading=false;render();return;}
+   await wcf145Load(Math.max(...allowed));
+ }catch(e){if(token!==v.request||v.teamId!==teamId)return;v.loading=false;v.error=e.message;render();}
+}
+const wcf145PreviousLeaderboardPage=leaderboardPage;
+leaderboardPage=function(){return wcf145Viewer.teamId?wcf145TeamPage():wcf145PreviousLeaderboardPage();};
+const wcf145PreviousRender=render;
+render=function(){wcf145PreviousRender();wcf145DecorateLadder();};
+const wcf145PreviousHandleAction=handleAction;
+handleAction=function(btn){
+ const a=btn.dataset.action;
+ if(a==='wcf145-open'){void wcf145Open(btn.dataset.teamId,btn.dataset.teamName);return;}
+ if(a==='wcf145-back'){
+  ++wcf145Viewer.request;wcf145Viewer.teamId=null;wcf145Viewer.data=null;wcf145Viewer.error='';
+  wcf145Viewer.loading=false;render();return;
+ }
+ if(a==='wcf145-round'){
+  const round=Number(btn.dataset.round);
+  if(wcf145IsScored(round)&&wcf145Viewer.teamId)void wcf145Load(round);
+  return;
+ }
+ if(a==='wcf145-retry'){
+  if(!wcf145Viewer.teamId)return;
+  void (async()=>{try{await wcf145LoadStatuses();if(wcf145IsScored(wcf145Viewer.round))await wcf145Load(wcf145Viewer.round);
+    else{wcf145Viewer.error='This round is still private.';render();}}
+    catch(e){wcf145Viewer.error=e.message;render();}})();
+  return;
+ }
+ return wcf145PreviousHandleAction(btn);
+};
+// Visiting another tab, or choosing Public Ladder again, closes the viewer.
+// Capture runs before the existing delegated navigation listener.
+document.addEventListener('click',event=>{
+ const nav=event.target.closest('[data-tab]');
+ if(nav&&wcf145Viewer.teamId){++wcf145Viewer.request;wcf145Viewer.teamId=null;wcf145Viewer.data=null;wcf145Viewer.loading=false;}
+},true);
+
+</script>
 </body></html>
