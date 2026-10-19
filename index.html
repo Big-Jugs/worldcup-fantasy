@@ -1380,6 +1380,18 @@ async function mpAuth(mode,email,password){const url=mode==='signup'?'/auth/v1/s
  if(x.access_token){mp.session={...x,expires_at:Math.floor(Date.now()/1000)+(x.expires_in||3600)};mpPersistSession();await mpLoadAccount();}
  return x;
 }
+/* Select the latest eligible OPEN round when a coach loads their account.
+   Round status comes from Supabase, not the calendar or browser storage.
+   The previous round must be scored, matching the server-driven round gate.
+   If no round is open between settlements, show the latest scored round. */
+function mpDefaultDisplayRound(rows){
+ const statuses=new Map((Array.isArray(rows)?rows:[]).map(row=>[Number(row.round_number),String(row.status||'').toLowerCase()]));
+ const eligible=r=>r===1||statuses.get(r-1)==='scored';
+ const open=[1,2,3,4,5].filter(r=>statuses.get(r)==='open'&&eligible(r));
+ if(open.length)return open[open.length-1];
+ const scored=[1,2,3,4,5].filter(r=>statuses.get(r)==='scored'&&eligible(r));
+ return scored.length?scored[scored.length-1]:1;
+}
 async function mpLoadAccount(){if(!mp.session?.user?.id)return;mp.loading=true;
  try{
   const [teams,rounds]=await Promise.all([
@@ -1395,7 +1407,7 @@ async function mpLoadAccount(){if(!mp.session?.user?.id)return;mp.loading=true;
   if(!roundsData[1])roundsData[1]=emptyLine();
   let draft=null;try{draft=JSON.parse(localStorage.getItem(mpDraftKey())||'null')}catch(e){}
   if(draft?.round&&mp.allowedRounds.has(draft.round)&&Array.isArray(draft.slots)&&draft.slots.length===21){roundsData[draft.round]={slots:draft.slots,captain:draft.captain,vice:draft.vice};mp.pending=true;}
-  state={version:1,marketVersion:7,teams:[{id:mp.team.id,name:mp.team.name,rounds:roundsData}],currentTeam:mp.team.id,round:1,scores:{},roundLocks:{},injured:{}};
+  state={version:1,marketVersion:7,teams:[{id:mp.team.id,name:mp.team.name,rounds:roundsData}],currentTeam:mp.team.id,round:mpDefaultDisplayRound(rounds),scores:{},roundLocks:{},injured:{}};
   mp.active=true;mp.ready=true;mp.syncError='';render();
   if(mp.pending)mpScheduleSave();
   await mpRefreshLadder();
@@ -2792,7 +2804,7 @@ render=function(){
  }
  // Retain all existing captain, DNP, team viewer and market functionality.
  const footer=document.querySelector('.foot span:last-child');
- if(footer)footer.textContent='World Cup Fantasy V8.14.7 · Made by Big Jugs · Public competition';
+ if(footer)footer.textContent='World Cup Fantasy V8.14.8 · Made by Big Jugs · Public competition';
 };
 // Catch a market snapshot that completed while later scripts were installing.
 if(wcf14MarketReady())void wcf146FetchRoundMovement();
