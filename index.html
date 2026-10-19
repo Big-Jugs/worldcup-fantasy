@@ -2634,21 +2634,35 @@ document.addEventListener('click',event=>{
 </script>
 
 <style id="wcf146-team-finances-style">
-/* V8.14.6: Authoritative wallet + market valuation, without double-crediting price gains. */
-.wcf146-finances{margin:0 0 12px;display:block;border:1px solid #2b5050;border-radius:10px;background:linear-gradient(115deg,#102b31,#0b202b);padding:11px 13px}
-.wcf146-heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px}
-.wcf146-heading b{font-size:10px;letter-spacing:1.1px;color:#82efc5}
-.wcf146-heading span{font-size:10px;color:#a0b7bb}
-.wcf146-finance-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
-.wcf146-finance-tile{min-width:0;padding:11px 13px;border:1px solid #2a5055;border-radius:8px;background:#102c34;display:flex;flex-direction:column;gap:4px}
-.wcf146-finance-label{font-size:9px;font-weight:850;letter-spacing:.45px;color:#a1c4c5;text-transform:uppercase}
-.wcf146-finance-figure{font-size:clamp(21px,2vw,29px);line-height:1.12;font-weight:900;letter-spacing:-.3px;font-variant-numeric:tabular-nums;color:#def9ef;overflow-wrap:anywhere}
+/* V8.14.7 compact team finances: presentation only; all V8.14.6 calculations unchanged. */
+.wcf146-finances{margin:0 0 7px;display:grid;grid-template-columns:125px minmax(0,1fr);align-items:center;gap:9px;border:1px solid #2b5050;border-radius:9px;background:linear-gradient(115deg,#102b31,#0b202b);padding:6px 9px}
+.wcf146-heading{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:3px;min-width:0;margin:0}
+.wcf146-heading b{font-size:9px;letter-spacing:.9px;color:#82efc5}
+.wcf146-heading span{font-size:9px;line-height:1.25;color:#a0b7bb}
+.wcf146-finance-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;min-width:0}
+.wcf146-finance-tile{min-width:0;min-height:50px;padding:5px 9px;border:1px solid #2a5055;border-radius:7px;background:#102c34;display:flex;flex-direction:column;justify-content:center;gap:0}
+.wcf146-finance-label{font-size:9px;font-weight:850;letter-spacing:.35px;color:#a1c4c5;text-transform:uppercase;line-height:1.25}
+.wcf146-finance-figure{font-size:21px;line-height:1.15;font-weight:900;letter-spacing:-.3px;font-variant-numeric:tabular-nums;color:#def9ef;overflow-wrap:anywhere}
 .wcf146-finance-figure.is-up{color:#81edb5}
 .wcf146-finance-figure.is-down{color:#ffacaa}
-.wcf146-finance-info{font-size:10px;color:#a1b8bd;line-height:1.4}
 .wcf146-finance-figure.is-pending{color:#9aafb4}
-@media(max-width:680px){.wcf146-finance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wcf146-finance-tile:last-child{grid-column:1/-1}.wcf146-finances{padding:9px;margin-bottom:9px}}
-@media(max-width:380px){.wcf146-finance-tile{padding:9px}.wcf146-finance-figure{font-size:21px}}
+.wcf146-finance-info{font-size:9px;color:#a1b8bd;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:1000px){
+ .wcf146-finances{grid-template-columns:1fr;gap:4px;padding:7px 9px}
+ .wcf146-heading{flex-direction:row;justify-content:space-between;align-items:baseline;gap:10px}
+}
+@media(max-width:680px){
+ .wcf146-finance-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
+ .wcf146-finance-tile{padding:5px 6px;min-height:46px}
+ .wcf146-finance-info{display:none}
+ .wcf146-heading span{font-size:8px}
+}
+@media(max-width:430px){
+ .wcf146-finances{padding:6px 7px}
+ .wcf146-finance-label{font-size:8px;letter-spacing:0}
+ .wcf146-finance-figure{font-size:clamp(15px,4vw,19px)}
+ .wcf146-heading span{max-width:65%;text-align:right}
+}
 </style>
 <script id="wcf146-team-finances-script">
 'use strict';
@@ -2712,7 +2726,7 @@ function wcf146FinancialPanel(){
  const rd=change.round?`ROUND ${change.round} PRICE CHANGE`:'LAST ROUND PRICE CHANGE';
  const info=change.note;
  return `<section class="wcf146-finances" aria-label="Current fantasy team finances">
-   <div class="wcf146-heading"><b>TEAM FINANCES</b><span>Price gains increase team value, not spendable cash</span></div>
+   <div class="wcf146-heading"><b>TEAM FINANCES</b><span>Price gains boost squad value, not cash</span></div>
    <div class="wcf146-finance-grid">
      <div class="wcf146-finance-tile"><span class="wcf146-finance-label">Squad value</span>
        <strong class="wcf146-finance-figure ${squad===null?'is-pending':''}" title="${esc(exact(squad))}">${currency(squad)}</strong>
@@ -2778,7 +2792,7 @@ render=function(){
  }
  // Retain all existing captain, DNP, team viewer and market functionality.
  const footer=document.querySelector('.foot span:last-child');
- if(footer)footer.textContent='World Cup Fantasy V8.14.6 · Made by Big Jugs · Public competition';
+ if(footer)footer.textContent='World Cup Fantasy V8.14.7 · Made by Big Jugs · Public competition';
 };
 // Catch a market snapshot that completed while later scripts were installing.
 if(wcf14MarketReady())void wcf146FetchRoundMovement();
