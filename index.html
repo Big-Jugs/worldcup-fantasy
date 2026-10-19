@@ -2282,7 +2282,7 @@ render=function(){
  const amt=salary.querySelector('.wcf-metric-value');const caption=salary.querySelector('.wcf-metric-caption');
  const projected=wcf14CashAtDraft();
  if(amt)amt.textContent=projected===null?'…':shortDollar(projected);
- if(caption)caption.textContent=wcf14MarketReady()?'Current market cash · squad value '+shortDollar(spent(lineup())):(wcf14.error?'Cash unavailable · retrying automatically':'Checking cash balance');
+ if(caption)caption.textContent=wcf14MarketReady()?'Spendable cash · current wallet balance':(wcf14.error?'Cash unavailable · retrying automatically':'Checking cash balance');
 };
 // On a cold reload, the multiplayer bootstrap in an earlier script is still
 // fetching its team. Its initial load may have started BEFORE this wrapper was
@@ -2632,4 +2632,162 @@ document.addEventListener('click',event=>{
 },true);
 
 </script>
+
+<style id="wcf146-team-finances-style">
+/* V8.14.6: Authoritative wallet + market valuation, without double-crediting price gains. */
+.wcf146-finances{margin:0 0 12px;display:block;border:1px solid #2b5050;border-radius:10px;background:linear-gradient(115deg,#102b31,#0b202b);padding:11px 13px}
+.wcf146-heading{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.wcf146-heading b{font-size:10px;letter-spacing:1.1px;color:#82efc5}
+.wcf146-heading span{font-size:10px;color:#a0b7bb}
+.wcf146-finance-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.wcf146-finance-tile{min-width:0;padding:11px 13px;border:1px solid #2a5055;border-radius:8px;background:#102c34;display:flex;flex-direction:column;gap:4px}
+.wcf146-finance-label{font-size:9px;font-weight:850;letter-spacing:.45px;color:#a1c4c5;text-transform:uppercase}
+.wcf146-finance-figure{font-size:clamp(21px,2vw,29px);line-height:1.12;font-weight:900;letter-spacing:-.3px;font-variant-numeric:tabular-nums;color:#def9ef;overflow-wrap:anywhere}
+.wcf146-finance-figure.is-up{color:#81edb5}
+.wcf146-finance-figure.is-down{color:#ffacaa}
+.wcf146-finance-info{font-size:10px;color:#a1b8bd;line-height:1.4}
+.wcf146-finance-figure.is-pending{color:#9aafb4}
+@media(max-width:680px){.wcf146-finance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wcf146-finance-tile:last-child{grid-column:1/-1}.wcf146-finances{padding:9px;margin-bottom:9px}}
+@media(max-width:380px){.wcf146-finance-tile{padding:9px}.wcf146-finance-figure{font-size:21px}}
+</style>
+<script id="wcf146-team-finances-script">
+'use strict';
+/* Round price gains belong to the squad held at the time of settlement.
+   Gains NEVER increase cash automatically, and trade/wallet RPCs are unchanged. */
+const wcf146Finance={teamId:null,round:0,history:null,loading:false,error:'',lastAttempt:0,retryAfter:0};
+function wcf146LatestSettlement(){
+ if(!Array.isArray(wcf14.settlements))return 0;
+ const rounds=wcf14.settlements.filter(r=>r.settled_at&&String(r.round_status||r.status).toLowerCase()==='scored')
+  .map(r=>Number(r.round_number)).filter(n=>Number.isInteger(n)&&n>=1&&n<=5);
+ return rounds.length?Math.max(...rounds):0;
+}
+function wcf146CurrentRound(){
+ if(mp.allowedRounds instanceof Set&&mp.allowedRounds.size){
+  const open=[...mp.allowedRounds].map(Number).filter(n=>Number.isInteger(n)&&n>=1&&n<=5);
+  if(open.length)return Math.max(...open);
+ }
+ return Math.max(1,Number(mp.lastScoredRound||1));
+}
+function wcf146CurrentSlots(){
+ if(!mp.active||!mp.team)return [];
+ const activeRound=wcf146CurrentRound();
+ // An unsaved draft is a preview only when the user is viewing the open round.
+ // Historical round selection never changes the valuation of the active squad.
+ if(Number(state.round)===activeRound)return (getLineup(currentTeam(),activeRound,false)?.slots||[]);
+ return wcf14.serverByRound[activeRound]||getLineup(currentTeam(),activeRound,false)?.slots||[];
+}
+function wcf146CurrentCash(){
+ if(!wcf14MarketReady())return null;
+ if(Number(state.round)===wcf146CurrentRound())return wcf14CashAtDraft();
+ return Number.isFinite(wcf14.cash)?wcf14.cash:null;
+}
+function wcf146Formatted(value){
+ if(!Number.isFinite(value))return '…';
+ const sign=value<0?'−':'';const a=Math.abs(value);
+ if(a>=1000000)return sign+'$'+(a/1000000).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')+'m';
+ if(a>=1000)return sign+'$'+(a/1000).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')+'k';
+ return sign+'$'+a.toLocaleString('en-AU');
+}
+function wcf146Movement(){
+ const r=wcf146LatestSettlement(),id=String(mp.team?.id||'');
+ if(!r)return {ready:true,round:0,delta:null,note:'No completed round yet'};
+ const h=wcf146Finance.history;
+ if(!h||h.round!==r||h.teamId!==id)return {ready:false,round:r,delta:null,note:wcf146Finance.error?'Price history unavailable · retrying':'Loading official price history'};
+ return {ready:true,round:r,delta:h.delta,note:'Based on your saved R'+r+' squad at settlement'};
+}
+function wcf146FinancialPanel(){
+ const ready=wcf14MarketReady();
+ const ids=wcf146CurrentSlots().filter(Boolean);
+ const valid=ready&&ids.every(id=>Number.isFinite(byId[id]?.price));
+ const squad=valid?ids.reduce((sum,id)=>sum+Number(byId[id].price),0):null;
+ const cash=wcf146CurrentCash();
+ const total=squad!==null&&cash!==null?squad+cash:null;
+ const change=wcf146Movement();
+ const draft=Number(state.round)===wcf146CurrentRound()&&mp.pending;
+ const currency=v=>v===null?'…':wcf146Formatted(v);
+ const exact=v=>v===null?'Currently unavailable':dollar(v);
+ const delta=change.delta;
+ const displayedDelta=delta===null?'…':(delta>0?'+':delta<0?'−':'')+wcf146Formatted(Math.abs(delta));
+ const movementColour=delta===null?'is-pending':delta>0?'is-up':delta<0?'is-down':'';
+ const rd=change.round?`ROUND ${change.round} PRICE CHANGE`:'LAST ROUND PRICE CHANGE';
+ const info=change.note;
+ return `<section class="wcf146-finances" aria-label="Current fantasy team finances">
+   <div class="wcf146-heading"><b>TEAM FINANCES</b><span>Price gains increase team value, not spendable cash</span></div>
+   <div class="wcf146-finance-grid">
+     <div class="wcf146-finance-tile"><span class="wcf146-finance-label">Squad value</span>
+       <strong class="wcf146-finance-figure ${squad===null?'is-pending':''}" title="${esc(exact(squad))}">${currency(squad)}</strong>
+       <span class="wcf146-finance-info">Current market value · ${valid?ids.length+'/21 selected':'Waiting for official prices'}</span></div>
+     <div class="wcf146-finance-tile"><span class="wcf146-finance-label">${rd}</span>
+       <strong class="wcf146-finance-figure ${movementColour}" title="${delta===null?'Unavailable':esc((delta>0?'+':'')+exact(delta))}">${displayedDelta}</strong>
+       <span class="wcf146-finance-info">${esc(info)}</span></div>
+     <div class="wcf146-finance-tile"><span class="wcf146-finance-label">Total team value</span>
+       <strong class="wcf146-finance-figure ${total===null?'is-pending':''}" title="${esc(exact(total))}">${currency(total)}</strong>
+       <span class="wcf146-finance-info">Squad value + ${draft?'projected cash after unsaved changes':'available cash'}</span></div>
+   </div></section>`;
+}
+async function wcf146FetchRoundMovement(){
+ if(!wcf14MarketReady()||wcf146Finance.loading)return;
+ const id=String(mp.team?.id||''),round=wcf146LatestSettlement();
+ if(!round){wcf146Finance.history=null;wcf146Finance.error='';return;}
+ if(wcf146Finance.history?.teamId===id&&wcf146Finance.history?.round===round)return;
+ if(Date.now()<wcf146Finance.retryAfter)return;
+ const saved=wcf14.serverByRound[round];
+ if(!Array.isArray(saved)||saved.length!==21){
+  wcf146Finance.error='Saved settled-round lineup missing';wcf146Finance.retryAfter=Date.now()+60000;render();return;
+ }
+ wcf146Finance.loading=true;wcf146Finance.lastAttempt=Date.now();
+ try{
+  const records=await mpRequest('/rest/v1/wcf_player_price_history?select=player_id,old_price,new_price,round_number&round_number=eq.'+round+'&limit=200');
+  if(!Array.isArray(records)||records.length!==140)throw Error('Official round price history incomplete');
+  const prices=new Map();
+  for(const p of records){
+   if(prices.has(p.player_id)||!Number.isInteger(Number(p.old_price))||!Number.isInteger(Number(p.new_price)))throw Error('Invalid or duplicate price entry');
+   prices.set(p.player_id,{old:Number(p.old_price),now:Number(p.new_price)});
+  }
+  const holdings=saved.filter(Boolean);
+  if(new Set(holdings).size!==holdings.length)throw Error('Saved round lineup has duplicate players');
+  if(holdings.some(pid=>!prices.has(pid)))throw Error('Price history missing a squad player');
+  const delta=holdings.reduce((n,pid)=>n+prices.get(pid).now-prices.get(pid).old,0);
+  if(!mp.active||String(mp.team?.id)!==id||!wcf14MarketReady()||wcf146LatestSettlement()!==round)return;
+  wcf146Finance.history={teamId:id,round,delta};wcf146Finance.error='';wcf146Finance.retryAfter=0;
+ }catch(e){
+  if(String(mp.team?.id)===id){wcf146Finance.error=String(e.message||e);wcf146Finance.retryAfter=Date.now()+60000;console.warn('Could not load verified round price movement:',wcf146Finance.error);}
+ }finally{wcf146Finance.loading=false;if(String(mp.team?.id)===id)render();}
+}
+// This wrapper preserves the existing wallet and trading requests. History
+// failures only hide the price-change tile; they never block player trades.
+const wcf146PreviousMarketRefresh=wcf14RefreshMarket;
+wcf14RefreshMarket=async function(...args){
+ const result=await wcf146PreviousMarketRefresh(...args);
+ if(wcf14MarketReady())void wcf146FetchRoundMovement();
+ return result;
+};
+const wcf146PreviousRender=render;
+render=function(){
+ wcf146PreviousRender();
+ if(tab!=='team'||!mp.active||!mp.team)return;
+ const heroEl=document.querySelector('.hero.wcf-team-hero');
+ if(!heroEl)return;
+ heroEl.insertAdjacentHTML('afterend',wcf146FinancialPanel());
+ // Clarify that price gains are never credited into the spendable wallet.
+ const cashCard=Array.from(heroEl.querySelectorAll('.wcf-hero-metric')).find(el=>el.querySelector('.wcf-metric-label')?.textContent==='SALARY REMAINING');
+ if(cashCard){
+  cashCard.querySelector('.wcf-metric-label').textContent='CASH REMAINING';
+  const caption=cashCard.querySelector('.wcf-metric-caption');
+  if(caption&&wcf14MarketReady())caption.textContent=mp.pending&&Number(state.round)===wcf146CurrentRound()?'Projected after unsaved squad changes':'Spendable cash · saved wallet balance';
+ }
+ // Retain all existing captain, DNP, team viewer and market functionality.
+ const footer=document.querySelector('.foot span:last-child');
+ if(footer)footer.textContent='World Cup Fantasy V8.14.6 · Made by Big Jugs · Public competition';
+};
+// Catch a market snapshot that completed while later scripts were installing.
+if(wcf14MarketReady())void wcf146FetchRoundMovement();
+setInterval(()=>{
+ if(document.visibilityState==='visible'&&wcf14MarketReady()&&wcf146LatestSettlement()&&
+  (!wcf146Finance.history||wcf146Finance.history.teamId!==String(mp.team?.id)||wcf146Finance.history.round!==wcf146LatestSettlement()))
+  void wcf146FetchRoundMovement();
+},15000);
+render();
+</script>
+
 </body></html>
