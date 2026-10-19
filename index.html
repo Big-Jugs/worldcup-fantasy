@@ -2816,4 +2816,247 @@ setInterval(()=>{
 render();
 </script>
 
+<style id="wcf-v8149-trade-css">
+.wcf149-trade-button{color:#a6eec8!important;font-weight:950!important;font-size:11px!important}.wcf149-trade-button:hover{background:#2c6653!important}.slot-undo{border:0;background:transparent;color:#ffce77;line-height:1;font-size:16px;cursor:pointer;padding:0 1px;height:17px;min-width:15px;border-radius:3px}.slot-undo:hover{background:#594529;color:#fff}.slot-undo:disabled{opacity:.4;cursor:not-allowed}.slot-tools-corner .slot-undo{display:inline-flex;align-items:center;justify-content:center}.wcf149-reset-button{font-size:10px;padding:5px 7px;border-color:#796848;color:#ffe0ac;white-space:nowrap}.wcf149-market-guide{font-size:10px;color:#badacb;border-bottom:1px solid #33564d;background:#12352f;padding:7px 10px;line-height:1.5}.wcf149-market-guide strong{color:#b0ffcb}.wcf149-market-guide .btn{padding:2px 7px;margin-left:7px}.wcf149-dialog{padding:12px 18px 20px;font-size:13px;color:#cbded9;line-height:1.6}.wcf149-dialog-detail{color:#ffd79d}.wcf149-dialog-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:20px}.wcf149-trade-action{color:#a0eac4;border-color:#2d7b5a}.slot-filled .slot-profile{right:48px!important}.slot-filled .slot-tools-corner{gap:1px}.slot-tools-corner .slot-change,.slot-tools-corner .slot-remove,.slot-tools-corner .slot-undo{min-width:13px;width:13px;height:16px}.bench-stack .slot-filled .slot-profile{right:44px!important}@media(max-width:580px){.slot-filled .slot-profile{right:29px!important}.slot-filled .slot-tools-corner,.slot-filled .slot-captain-choices{display:none!important}.bench-stack .slot-filled .slot-profile{right:29px!important}.wcf149-reset-button{white-space:normal;font-size:9px}.wcf149-dialog-actions .btn{white-space:normal}}
+</style>
+<script id="wcf-v8149-atomic-trades">
+/* V8.14.9 - Trade-only squad controls, single-trade undo, guarded round reset.
+   Uses existing authoritative wcf_save_lineup RPC for all ordinary trades.
+   Uses new wcf_reset_open_round_trades RPC for full-round rollback.
+   No price, scoring, finance or historical viewing calculations are changed. */
+'use strict';
+const wcf149 = {busy:false,undoing:false};
+const wcf149StorageKey=()=>`wcf149-trade-journal-${mp.team?.id||'preview'}-${state.round}`;
+function wcf149ReadHistory(){try{const x=JSON.parse(localStorage.getItem(wcf149StorageKey())||'[]');return Array.isArray(x)?x.filter(e=>e&&Number.isInteger(e.index)&&e.inId&&e.outId).slice(-50):[];}catch(e){return [];}}
+function wcf149WriteHistory(items){try{localStorage.setItem(wcf149StorageKey(),JSON.stringify(items.slice(-50)));}catch(e){console.warn('Trade history unavailable',e);}}
+function wcf149TradingRound(){return !!(mp.active && Number(state.round)>1);}
+function wcf149Previous(){if(!wcf149TradingRound())return null;const l=getLineup(currentTeam(),state.round-1,false);return l&&Array.isArray(l.slots)&&l.slots.length===21?l:null;}
+function wcf149ActiveEditable(){return wcf149TradingRound()&&mp.allowedRounds?.has(Number(state.round))&&!editLocked()&&wcf14MarketReady()&&wcf13.loaded;}
+function wcf149ResetAllowed(){return wcf149ActiveEditable()&&!wcf13CaptainIsLocked(state.round)&&!!wcf149Previous()&&!mp.pending&&!mp.saving&&!wcf149.busy;}
+function wcf149NetAdded(id){const prev=wcf149Previous();return !!prev&&!!id&&prev.slots.filter(Boolean).length===21&&!prev.slots.includes(id);}
+function wcf149JournalEntry(inId){const entries=wcf149ReadHistory();for(let i=entries.length-1;i>=0;i--)if(entries[i].inId===inId)return {entry:entries[i],offset:i,entries};return null;}
+function wcf149UndoCandidate(index){
+ const prev=wcf149Previous(),now=lineup(),inId=now.slots[index];if(!prev||!wcf149NetAdded(inId))return null;
+ const missing=prev.slots.filter(id=>id&&!now.slots.includes(id));
+ const eligible=id=>!!id&&!now.slots.includes(id)&&!!byId[id]&&(index>=13||byId[id].pos.includes(SLOT_POS[index]));
+ const matched=wcf149JournalEntry(inId);
+ if(matched && eligible(matched.entry.outId))return {outId:matched.entry.outId,matched};
+ const atSlot=prev.slots[index];
+ if(eligible(atSlot))return {outId:atSlot,matched:null};
+ const possibilities=missing.filter(eligible);
+ if(possibilities.length===1)return {outId:possibilities[0],matched:null};
+ return {outId:null,matched:null};
+}
+function wcf149ExplainReset(reason){
+ const can=wcf149ResetAllowed(),r=Number(state.round),before=wcf149Previous();
+ const message=reason||'Restore your entire team to the lineup you finished the previous round with.';
+ const disabled=can?'':' disabled';
+ const details=!before?'The previous-round team is unavailable.':!wcf149ActiveEditable()?'This round is not open for changes.':wcf13CaptainIsLocked(r)?'Reset closes at the first fixture kickoff.':mp.pending||mp.saving?'Wait until your current changes have synced.':wcf149.busy?'Another operation is in progress.':'This will reverse ALL trades and restore previous-round positions, captain and vice-captain. Current prices will be used for cash adjustments.';
+ modal(`<div class="modal-head"><h3>↶ Reset Round ${r} trades?</h3><button class="btn sm" data-action="close-overlay" aria-label="Close">✕</button></div>
+ <div class="wcf149-dialog"><p>${esc(message)}</p><p class="wcf149-dialog-detail">${esc(details)}</p><p>This action cannot be used after this round's first kickoff. It will not change last round's historical team or any published score.</p><div class="wcf149-dialog-actions"><button class="btn" data-action="close-overlay">Keep current team</button><button class="btn danger" data-action="wcf149-confirm-reset"${disabled}>Yes, reset all R${r} trades</button></div></div>`);
+}
+function wcf149BeginTrade(i){
+ if(!wcf149TradingRound()){toast('Select a player during the pre-tournament period instead.',true);return;}
+ if(!wcf149ActiveEditable()){toast('Trades are closed or live prices are still loading.',true);return;}
+ if(mp.pending||mp.saving||wcf149.busy){toast('Wait for the previous squad change to finish syncing.',true);return;}
+ const id=lineup().slots[i];if(!id){toast('Select a player already in your squad to trade out.',true);return;}
+ if(wcf13PlayerIsLocked(id)){toast(byId[id].name+' is locked because their fixture has kicked off.',true);return;}
+ swappingFrom=null;selectedSlot=i;posFilter=i<13?SLOT_POS[i]:'ALL';statusFilter='ALL';tab='team';render();
+ toast('Trading out '+byId[id].name+'. Choose a replacement from the player market. Your player stays until the trade is valid.');
+}
+function wcf149CashAfterReplacement(index,replacement){
+ if(!wcf14MarketReady()||!Number.isFinite(Number(wcf14.cash)))return null;
+ const server=wcf14SavedSlots();if(!Array.isArray(server)||server.length!==21)return null;
+ const target=lineup().slots.slice();target[index]=replacement;
+ const old=new Set(server.filter(Boolean)),next=new Set(target.filter(Boolean));
+ let cash=Number(wcf14.cash);
+ for(const id of old)if(!next.has(id))cash+=Number(byId[id]?.price||0);
+ for(const id of next)if(!old.has(id))cash-=Number(byId[id]?.price||0);
+ return cash;
+}
+function wcf149UndoTrade(index){
+ if(!wcf149ActiveEditable()){toast('Undo is unavailable for this locked round.',true);return;}
+ if(mp.pending||mp.saving||wcf149.busy){toast('Wait for your current changes to finish syncing.',true);return;}
+ const inId=lineup().slots[index];
+ if(!wcf149NetAdded(inId)){toast('This player was already in your previous-round squad.',true);return;}
+ const replacement=wcf149UndoCandidate(index);
+ if(!replacement?.outId){wcf149ExplainReset('The original outgoing player cannot be identified safely after subsequent squad moves. You can restore the whole previous-round team instead.');return;}
+ if(wcf13PlayerIsLocked(inId)||wcf13PlayerIsLocked(replacement.outId,state.round,true)){
+   toast('One of these players is locked after kickoff. Undo is unavailable.',true);return;
+ }
+ const balance=wcf149CashAfterReplacement(index,replacement.outId);
+ if(balance===null){toast('Waiting for the latest wallet balance. Please refresh.',true);return;}
+ if(balance<0){wcf149ExplainReset(`Reversing ${byId[inId].name} back to ${byId[replacement.outId].name} would leave your cash at ${shortDollar(balance)}. The single undo is unaffordable after your other trades.`);return;}
+ const entry=replacement.matched?.entry;
+ const restoredCapt=entry?.captain,restoredVice=entry?.vice;
+ const ok=mutateLine(l=>{
+   l.slots[index]=replacement.outId;
+   if(l.captain===inId)l.captain=null;
+   if(l.vice===inId)l.vice=null;
+   if(!l.captain && restoredCapt===replacement.outId && index<13)l.captain=replacement.outId;
+   if(!l.vice && restoredVice===replacement.outId && index<13 && l.captain!==replacement.outId)l.vice=replacement.outId;
+ });
+ if(!ok){if(!wcf149ResetAllowed())return;wcf149ExplainReset('The trade could not be reversed as a single player replacement. You may reset the whole round instead.');return;}
+ const history=wcf149ReadHistory();
+ if(replacement.matched){const e=history.findLastIndex(x=>x.inId===inId&&x.outId===replacement.outId);if(e>=0)history.splice(e,1);}
+ else {const last=history.findLastIndex(x=>x.inId===inId);if(last>=0)history.splice(last,1);}
+ wcf149WriteHistory(history);
+ swappingFrom=null;selectedSlot=null;posFilter='ALL';render();toast('Trade reversed: '+byId[replacement.outId].name+' restored.');
+}
+async function wcf149ResetTrades(){
+ if(!wcf149ResetAllowed()){closeModal();toast('Reset unavailable: the round is locked, a fixture has started, or a save is pending.',true);return;}
+ const round=Number(state.round),team=String(mp.team.id);wcf149.busy=true;closeModal();render();
+ try{
+   const result=await mpRequest('/rest/v1/rpc/wcf_reset_open_round_trades','POST',{p_round:round});
+   if(!result?.success)throw Error('The server did not confirm the reset');
+   try{localStorage.removeItem(wcf149StorageKey());localStorage.removeItem(mpDraftKey());}catch(e){}
+   mp.pending=false;mp.syncError='';
+   await mpLoadAccount();
+   selectedSlot=null;swappingFrom=null;posFilter='ALL';
+   toast('All Round '+round+' trades reversed. Your previous-round squad and captaincy are restored.');
+ }catch(e){toast('Round reset failed: '+String(e.message||e),true);}
+ finally{wcf149.busy=false;if(String(mp.team?.id)===team)render();}
+}
+// Prevent incomplete post-R1 squads via all normal mutation paths, including
+// swapping a player into an empty position and legacy remove/clear actions.
+const wcf149OldMutate=mutateLine;
+mutateLine=function(fn){
+ if(wcf149TradingRound()){
+  if(wcf149.busy||mp.pending||mp.saving){toast('Wait for the previous change to sync before editing.',true);return false;}
+  const before=lineup(),candidate=JSON.parse(JSON.stringify(before));fn(candidate);
+  const existingFull=before.slots.filter(Boolean).length===21;
+  if(existingFull&&candidate.slots.filter(Boolean).length!==21){toast('A full squad must stay at 21 players. Use T to trade one player for another.',true);return false;}
+  const previous=wcf149Previous();
+  if(previous&&previous.slots.filter(Boolean).length===21&&candidate.slots.filter(Boolean).length!==21){toast('Trades must keep all 21 positions occupied.',true);return false;}
+  const used=tradeCount(currentTeam(),state.round,candidate),allowed=tradesAllowed(state.round,currentTeam());
+  if(used>allowed){toast('Trade limit reached for this round ('+allowed+').',true);return false;}
+ }
+ return wcf149OldMutate(fn);
+};
+const wcf149OldRemoveSlot=removeSlot;
+removeSlot=function(i){if(wcf149TradingRound()){wcf149BeginTrade(i);return;}return wcf149OldRemoveSlot(i);};
+const wcf149OldPick=pickPlayer;
+pickPlayer=function(id){
+ if(!wcf149TradingRound())return wcf149OldPick(id);
+ if(!wcf149ActiveEditable()){toast('Trades are unavailable until the market and round status are ready.',true);return;}
+ if(mp.pending||mp.saving||wcf149.busy){toast('Please wait for the previous trade to sync.',true);return;}
+ if(selectedSlot===null||selectedSlot<0||!lineup().slots[selectedSlot]){toast('Tap T on the outgoing player before selecting a replacement.',true);return;}
+ const index=selectedSlot,outId=lineup().slots[index];if(id===outId)return;
+ if(lineup().slots.includes(id)){toast('That player is already in your squad. Use ↔ for free position swaps.',true);return;}
+ if(wcf13PlayerIsLocked(outId)||wcf13PlayerIsLocked(id,state.round,true)){toast('A player in this trade is locked after kickoff.',true);return;}
+ const capt=lineup().captain,vice=lineup().vice;
+ const value=wcf149CashAfterReplacement(index,id);
+ if(value===null||value<0){toast(value===null?'Wallet is still loading.':`Not enough cash for this replacement (${shortDollar(-value)} short).`,true);return;}
+ wcf149OldPick(id);
+ // Only record a trade after a genuine successful one-for-one mutation.
+ if(lineup().slots[index]===id){
+  const history=wcf149ReadHistory();history.push({index,inId:id,outId,captain:capt,vice,at:Date.now()});wcf149WriteHistory(history);
+ }
+};
+// Give each held player a T control; show reverse arrow only on players new
+// versus the previous-round starting roster.
+const wcf149OldSlotHTML=slotHTML;
+slotHTML=function(i){
+ let html=wcf149OldSlotHTML(i);if(!mp.active||!lineup().slots[i])return html;
+ const id=lineup().slots[i],p=byId[id],locked=!wcf149ActiveEditable()||wcf13PlayerIsLocked(id);
+ const attribute=locked?' disabled aria-disabled="true"':'';
+ html=html.replace(/<button type="button" class="slot-remove" data-action="remove" data-index="(\d+)"[^>]*>×<\/button>/,
+  `<button type="button" class="slot-remove wcf149-trade-button" data-action="wcf149-trade" data-index="${i}" title="Trade out ${esc(p.name)}" aria-label="Trade out ${esc(p.name)}"${attribute}>T</button>`);
+ if(wcf149NetAdded(id)){
+     html=html.replace(/(<button type="button" class="slot-remove wcf149-trade-button"[^>]*>T<\/button>)/,
+    `$1<button type="button" class="slot-undo wcf149-undo-button" data-action="wcf149-undo" data-index="${i}" title="Reverse trade for ${esc(p.name)}" aria-label="Undo trade for ${esc(p.name)}"${attribute}>↶</button>`);
+ }
+ return html;
+};
+// Replace selection-row Remove and provide round reset beside the trade count.
+const wcf149OldTeamArea=teamArea;
+teamArea=function(){
+ let html=wcf149OldTeamArea();if(!mp.active)return html;
+ html=html.replace(/<button class="btn sm danger" data-action="remove" data-index="(\d+)">Remove<\/button>/g,
+  '<button class="btn sm wcf149-trade-action" data-action="wcf149-trade" data-index="$1">T · Trade</button>');
+ if(selectedSlot!==null&&wcf149NetAdded(lineup().slots[selectedSlot]))html=html.replace('</span></div></div>',`<button class="btn sm" data-action="wcf149-undo" data-index="${selectedSlot}">↶ Undo trade</button></span></div></div>`);
+ const active=wcf149ResetAllowed(),havePrevious=!!wcf149Previous();
+ if(havePrevious){
+  const btn=`<button class="btn sm wcf149-reset-button" data-action="wcf149-reset-prompt" title="Restore previous-round squad before first kickoff"${active?'':' disabled'}>↶ Reset trades</button>`;
+  html=html.replace('<span class="trade-pill">',btn+'<span class="trade-pill">');
+ }
+ return html;
+};
+// Player profiles must not advertise a standalone ADD option in later rounds.
+const wcf149OldProfile=playerProfile;
+playerProfile=function(id){
+ wcf149OldProfile(id);
+ if(!wcf149TradingRound())return;
+ const b=document.querySelector('.modal-backdrop [data-action="profile-pick"]');
+ if(!b)return;
+ const inside=lineup().slots.includes(id),ready=selectedSlot!==null&&!!lineup().slots[selectedSlot]&&wcf149ActiveEditable();
+ if(!inside){b.textContent=ready?'Trade into selected position':'Select T on a player first';b.disabled=!ready;}
+};
+const wcf149OldMarket=marketList;
+marketList=function(){
+ let html=wcf149OldMarket();if(!wcf149TradingRound())return html;
+ const ready=selectedSlot!==null&&!!lineup().slots[selectedSlot]&&wcf149ActiveEditable();
+ // Never show an ADD action in a post-R1 round: only replacement trades.
+ html=html.replace(/(<button\b[^>]*data-action="pick"[^>]*)(>)(ADD \+)(<\/button>)/g,(_all,attrs,gt,_label,end)=>
+    attrs+(ready?'':' disabled title="First select T on an outgoing player"')+gt+(ready?'TRADE':'T FIRST')+end);
+ return html;
+};
+const wcf149OldMarketArea=marketArea;
+marketArea=function(full=false){
+ let html=wcf149OldMarketArea(full);if(!wcf149TradingRound())return html;
+ const id=selectedSlot!==null?lineup().slots[selectedSlot]:null;
+ const copy=id?`<strong>Trading out: ${esc(byId[id]?.name||id)}</strong> — select the incoming player. Your squad will remain 21/21. <button class="btn sm" data-action="wcf149-cancel-trade">Cancel</button>`:
+ 'To make a trade, select <b>T</b> on a player in your squad. No player will be removed until a valid replacement is chosen.';
+ return html.replace('<div class="market-controls">',`<div class="wcf149-market-guide" role="status">${copy}</div><div class="market-controls">`);
+};
+// Intercept the latest mobile menu, which otherwise still offered Remove.
+const wcf149OldMobileMenu=wcf13MobileActions;
+wcf13MobileActions=function(i){
+ wcf149OldMobileMenu(i);if(!wcf149TradingRound())return;
+ const root=document.querySelector('.modal-backdrop'),rm=root?.querySelector('[data-action="mobile-remove"]');
+ if(rm){rm.dataset.action='wcf149-trade';rm.textContent='T · Trade player';rm.classList.remove('danger');}
+ const id=lineup().slots[i];if(wcf149NetAdded(id)&&root){
+  const options=root.querySelector('.wcf-menu-options');if(options)options.insertAdjacentHTML('beforeend',`<button class="btn wcf149-undo-mobile" data-action="wcf149-undo" data-index="${i}">↶ Undo this trade</button>`);
+ }
+};
+const wcf149OldHandle=handleAction;
+handleAction=function(button){
+ const a=button.dataset.action,i=Number(button.dataset.index);
+ if(a==='wcf149-trade'){closeModal();wcf149BeginTrade(i);return;}
+ if(a==='wcf149-undo'){closeModal();wcf149UndoTrade(i);return;}
+ if(a==='wcf149-reset-prompt'){wcf149ExplainReset();return;}
+ if(a==='wcf149-confirm-reset'){void wcf149ResetTrades();return;}
+ if(a==='wcf149-cancel-trade'){selectedSlot=null;swappingFrom=null;posFilter='ALL';render();return;}
+ if(wcf149TradingRound()&&['remove','mobile-remove','clear-team','autofill'].includes(a)){
+  if(a==='remove'||a==='mobile-remove'){closeModal();wcf149BeginTrade(i);}else toast('This action is unavailable after Round 1. Use T to make a valid trade.',true);
+  return;
+ }
+ return wcf149OldHandle(button);
+};
+const wcf149OldFlush=mpFlush;
+mpFlush=async function(...args){
+ const result=await wcf149OldFlush(...args);
+ if(mp.active&&mp.syncError&&/(cash|wallet|insufficient|allowance|trade|squad|position)/i.test(mp.syncError)){
+  const error=mp.syncError;
+  // Do not keep an optimistic draft that the database rejected.
+  try{localStorage.removeItem(mpDraftKey());}catch(e){}
+  mp.pending=false;mp.syncError='';
+  try{await mpLoadAccount();}catch(e){console.warn('Could not reload rejected trade',e);}
+  if(/cash|wallet|insufficient/i.test(error)&&wcf149ResetAllowed())wcf149ExplainReset('The database rejected the trade because of the cash balance. Your last saved team has been restored. You can reset all this round’s trades if needed.');
+  else toast('Trade rejected by Supabase: '+error+'. Your last saved squad has been restored.',true);
+ }
+ return result;
+};
+const wcf149OldRender=render;
+render=function(){
+ wcf149OldRender();
+ if(tab!=='team'||!wcf149TradingRound())return;
+ if(wcf149.busy){for(const b of document.querySelectorAll('[data-action^="wcf149-"]'))b.disabled=true;}
+ const footer=document.querySelector('.foot span:last-child');
+ if(footer)footer.textContent='World Cup Fantasy V8.14.9 · Made by Big Jugs · Public competition';
+};
+window.wcfTradeUI={getStatus:()=>({round:state.round,active:wcf149TradingRound(),editable:wcf149ActiveEditable(),resetAllowed:wcf149ResetAllowed(),pending:mp.pending,saving:mp.saving}),undoCandidate:i=>wcf149UndoCandidate(i),cashAfter:(i,id)=>wcf149CashAfterReplacement(i,id)};
+render();
+
+</script>
 </body></html>
