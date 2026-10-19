@@ -3075,4 +3075,132 @@ window.wcfTradeUI={getStatus:()=>({round:state.round,active:wcf149TradingRound()
 render();
 
 </script>
+
+<style id="wcf-v81412-substitute-mode-css">
+/* V8.14.12: blue denotes a free S substitution; green only denotes a T trade. */
+.slot-filled.wcf1512-swap-source,
+.slot-filled.wcf1512-swap-eligible{
+ outline:2px solid #6bbfff!important;
+ outline-offset:-2px!important;
+ border-color:#83caff!important;
+ box-shadow:0 0 0 1px #81ccffad inset,0 0 14px #54b8ff75!important;
+ background:#164555!important;
+}
+.slot-filled.wcf1512-swap-source .slot-change{color:#fff!important;background:#1b6b97!important;border-radius:3px}
+.slot-filled.wcf1512-swap-eligible .slot-change{color:#a4e0ff!important}
+.slot-filled.wcf1512-swap-eligible .slot-profile{cursor:pointer}
+@media(max-width:640px){
+ .slot-filled.wcf1512-swap-source,.slot-filled.wcf1512-swap-eligible{
+  outline:2px solid #6bbfff!important;outline-offset:-2px!important;
+  box-shadow:0 0 0 1px #81ccffad inset,0 0 12px #54b8ff75!important;
+ }
+}
+</style>
+<script id="wcf-v81412-substitution-mode">
+/* V8.14.12: make S strictly an in-squad position exchange, independent of T.
+   Prevents S from opening the market trade flow or leaving a green selection
+   after cancellation. Nothing here modifies server-side trade calculations. */
+'use strict';
+function wcf1512SwapEligible(from,to){
+ if(!wcf149TradingRound()||!mp.allowedRounds?.has(Number(state.round))||editLocked())return false;
+ if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to<0||from>=21||to>=21||from===to)return false;
+ const slots=lineup().slots,a=slots[from],b=slots[to];
+ // In a completed 21-player squad, S must exchange TWO existing players.
+ if(!a||!b||!byId[a]||!byId[b])return false;
+ if(wcf13PlayerIsLocked(a)||wcf13PlayerIsLocked(b))return false;
+ if(to<13&&!byId[a].pos.includes(SLOT_POS[to]))return false;
+ if(from<13&&!byId[b].pos.includes(SLOT_POS[from]))return false;
+ return true;
+}
+function wcf1512CancelSwap(){
+ swappingFrom=null;selectedSlot=null;wcf149.tradeSlot=null;
+ render();
+}
+const wcf1512PreviousSelectSlot=selectSlot;
+selectSlot=function(i){
+ if(!wcf149TradingRound())return wcf1512PreviousSelectSlot(i);
+ if(!Number.isInteger(i)||i<0||i>=21||!lineup().slots[i]){
+  if(swappingFrom!==null)wcf1512CancelSwap();
+  else toast('Select S on an existing squad player to make a free substitution.',true);
+  return;
+ }
+ // A second click on the SAME S cleanly restores the default display.
+ if(swappingFrom===i){wcf1512CancelSwap();return;}
+ // Only illuminated, eligible squad players are valid swap destinations.
+ if(swappingFrom!==null){
+  if(!wcf1512SwapEligible(swappingFrom,i)){
+   toast('Those players cannot be substituted: check positional eligibility and match lockouts.',true);return;
+  }
+  const from=swappingFrom;
+  wcf149.tradeSlot=null;selectedSlot=null;
+  // Existing swapSlots handles the actual free atomic roster movement.
+  const ok=swapSlots(from,i);
+  if(ok){swappingFrom=null;selectedSlot=null;posFilter='ALL';statusFilter='ALL';render();}
+  return;
+ }
+ const id=lineup().slots[i];
+ if(!mp.allowedRounds?.has(Number(state.round))||editLocked()||wcf13PlayerIsLocked(id)){
+  toast('Substitutions are unavailable for this locked player or round.',true);return;
+ }
+ if(mp.pending||mp.saving||wcf149.busy){toast('Wait for your previous change to finish syncing.',true);return;}
+ // Critically: no selectedSlot means the market cannot initiate a trade.
+ const wasTrading=wcf149.tradeSlot!==null;
+ wcf149.tradeSlot=null;selectedSlot=null;swappingFrom=i;
+ if(wasTrading){posFilter='ALL';statusFilter='ALL';}
+ tab='team';render();
+};
+// Add blue swap-target highlights to the SAME 21 player cards rendered by the
+// existing scoring / historical / financial website versions.
+const wcf1512PreviousSlotHTML=slotHTML;
+slotHTML=function(i){
+ let html=wcf1512PreviousSlotHTML(i);
+ if(!wcf149TradingRound()||swappingFrom===null||!lineup().slots[i])return html;
+ const cls=i===swappingFrom?'wcf1512-swap-source':wcf1512SwapEligible(swappingFrom,i)?'wcf1512-swap-eligible':'';
+ if(cls)html=html.replace('class="slot slot-filled ',`class="slot slot-filled ${cls} `);
+ return html;
+};
+// A blue card can be selected by its S button OR by tapping its player
+// name/jersey. Ineligible cards retain their normal player-profile behaviour.
+const wcf1512PreviousHandleAction=handleAction;
+handleAction=function(button){
+ if(wcf149TradingRound()&&swappingFrom!==null&&button.dataset.action==='profile'&&button.closest('.slot-filled')){
+  const i=lineup().slots.indexOf(button.dataset.id);
+  if(i===swappingFrom||wcf1512SwapEligible(swappingFrom,i)){selectSlot(i);return;}
+ }
+ return wcf1512PreviousHandleAction(button);
+};
+// Defence in depth: no one can trade in via the market based on an S
+// selection (even via direct calls to pickPlayer rather than a button).
+const wcf1512PreviousPickPlayer=pickPlayer;
+pickPlayer=function(id){
+ if(wcf149TradingRound()&&(swappingFrom!==null||wcf149.tradeSlot===null||selectedSlot!==wcf149.tradeSlot)){
+  toast('To trade from the market, select the T button on an outgoing player. S only swaps squad positions.',true);
+  return;
+ }
+ return wcf1512PreviousPickPlayer(id);
+};
+// If the T control is used while S is selected, existing wcf149BeginTrade
+// clears swappingFrom. The market is only active when T owns selection.
+const wcf1512PreviousMarketArea=marketArea;
+marketArea=function(full=false){
+ const html=wcf1512PreviousMarketArea(full);
+ if(!wcf149TradingRound()||wcf149.tradeSlot!==null)return html;
+ // The default guide should stay neutral even while a substitution is active.
+ return html.replace(/<strong>Trading out:[\s\S]*?<\/strong>[^<]*<button class="btn sm" data-action="wcf149-cancel-trade">Cancel<\/button>/,
+ 'To make a trade, select <b>T</b> on a player in your squad. No player will be removed until a valid replacement is chosen.');
+};
+const wcf1512PreviousRender=render;
+render=function(){
+ wcf1512PreviousRender();
+ if(tab==='team'&&swappingFrom!==null&&wcf149TradingRound()){
+  // Preserve the normal market rather than presenting a position filter or
+  // a green selected-player message in the team footer.
+  const f=document.querySelector('.team-selection-hint');
+  if(f)f.textContent='S · Select a blue-highlighted teammate to swap positions. Tap S again to cancel. No trade used.';
+ }
+ const footer=document.querySelector('.foot span:last-child');
+ if(footer)footer.textContent='World Cup Fantasy V8.14.12 · Made by Big Jugs · Public competition';
+};
+render();
+</script>
 </body></html>
