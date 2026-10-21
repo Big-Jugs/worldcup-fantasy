@@ -1175,7 +1175,7 @@ render();
 /* World Cup Fantasy V7.3.1 — one shared, public team-list feed for EVERY visitor.
    Visitors never need to connect a URL, sign in, or manage per-device settings. */
 const WORLD_CUP_FEED_URL='https://raw.githubusercontent.com/Big-Jugs/worldcup-teamlists/main/worldcup-teamlists.json';
-const AUTO_FEED_INTERVAL_MS=15*60*1000;
+const AUTO_FEED_INTERVAL_MS=2*60*1000; // Automatic updates within about 2 minutes of GitHub publication
 let liveLastChecked=null, liveLastSuccess=null, liveFeedMode='checking', liveFeedMessage='';
 let liveFeedInFlight=null;
 const v73StatusBase=statusFor;
@@ -1189,7 +1189,7 @@ keyLegend=function(){
  text=text.replace('Round 1: official 13 starters and four interchange per nation; extended reserves show as outside 17.',
                    'World Cup: starting 13, six interchange (14–19), extended reserves outside 19.').replace(/Outside 17/g,'Outside 19');
  const badgeClass=liveFeedMode==='connected'?'feed-ok':liveFeedMode==='error'?'feed-warning':'feed-wait';
- const message=liveFeedMode==='connected'?'Live team lists active':liveFeedMode==='error'?'Live feed temporarily unavailable — showing last verified lists':'Checking live team lists…';
+ const message=liveFeedMode==='connected'?'Live team lists active · checking every 2 min':liveFeedMode==='error'?'Live feed temporarily unavailable — showing last verified lists':'Checking live team lists…';
  const checked=liveLastChecked?' · checked '+liveLastChecked.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'}):'';
  const extra=liveFeedMode==='error'&&liveLastSuccess?' · last successful '+liveLastSuccess.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'}):'';
  const sourceNote=`<div class="auto-source-note" role="status" aria-live="polite"><span class="auto-feed-indicator ${badgeClass}"><span class="auto-feed-dot" aria-hidden="true"></span>${esc(message)}</span><span class="auto-feed-timestamp">${esc(checked+extra)}</span></div>`;
@@ -1197,17 +1197,30 @@ keyLegend=function(){
  // Status, Refresh and Import are siblings inside the existing feed-row.
  return text.replace('<span class="feed-buttons">',sourceNote+'<span class="feed-buttons">');
 };
-const v73LocalSync=syncTeamLists;
-// Use the feed only. Never reset to the bundled static JSON on a failed check.
+// Update the check timestamp/connection badge without rebuilding trade/substitution controls.
+function wcf161RefreshFeedBadge(){
+ const message=liveFeedMode==='connected'?'Live team lists active · checking every 2 min':liveFeedMode==='error'?'Live feed temporarily unavailable — showing last verified lists':'Checking live team lists…';
+ const css=liveFeedMode==='connected'?'feed-ok':liveFeedMode==='error'?'feed-warning':'feed-wait';
+ const checked=liveLastChecked?' · checked '+liveLastChecked.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'}):'';
+ const extra=liveFeedMode==='error'&&liveLastSuccess?' · last successful '+liveLastSuccess.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit'}):'';
+ document.querySelectorAll('.auto-feed-indicator').forEach(el=>{
+  el.className='auto-feed-indicator '+css;
+  el.innerHTML='<span class="auto-feed-dot" aria-hidden="true"></span>'+esc(message);
+ });
+ document.querySelectorAll('.auto-feed-timestamp').forEach(el=>{el.textContent=checked+extra;});
+}
+// Never trust a browser cache for the feed. Preserve the last verified feed if a fetch fails.
+// Rerender full player cards only after changed data (or an explicit user Refresh).
 syncTeamLists=function(userInitiated=false){
  if(liveFeedInFlight)return liveFeedInFlight;
+ const oldMode=liveFeedMode;
  liveFeedMode=liveLastSuccess?'connected':'checking';
  liveFeedMessage='';
- if(userInitiated)render();
+ if(userInitiated)wcf161RefreshFeedBadge();
  liveFeedInFlight=(async()=>{
   try{
    const target=new URL(WORLD_CUP_FEED_URL);
-   target.searchParams.set('_ts',String(Date.now())); // bypass intermediate caches where possible
+   target.searchParams.set('_ts',String(Date.now()));
    const res=await fetch(target.href,{cache:'no-store',mode:'cors',credentials:'omit'});
    if(!res.ok)throw Error('Feed responded with HTTP '+res.status);
    const next=validateTeamLists(await res.json());
@@ -1216,21 +1229,24 @@ syncTeamLists=function(userInitiated=false){
    const incoming=Date.parse(next.updatedAt||'');
    if(!Number.isFinite(incoming))throw Error('Missing or invalid feed timestamp');
    const existing=Date.parse(teamListFeed?.updatedAt||'')||0;
-   if(incoming>=existing){
+   const changed=incoming>existing || !teamListFeed;
+   if(changed){
     teamListFeed=next;
     teamFeedTime=new Date();
     try{localStorage.setItem(TEAMLISTS_CACHE_KEY,JSON.stringify(next))}catch(e){}
    }
-   liveLastChecked=new Date(); liveLastSuccess=liveLastChecked;
-   liveFeedMode='connected'; liveFeedMessage='';
+   liveLastChecked=new Date();liveLastSuccess=liveLastChecked;
+   liveFeedMode='connected';liveFeedMessage='';
    teamFeedStatus='shared automatic GitHub feed';
-   render();
+   if(changed||userInitiated||oldMode!=='connected')render();
+   else wcf161RefreshFeedBadge();
    if(userInitiated)toast(incoming>=existing?`Team lists refreshed · ${count} verified statuses.`:'Connected · keeping more recent cached team lists.');
    return true;
   }catch(e){
+   const prior=liveFeedMode;
    liveLastChecked=new Date();liveFeedMode='error';liveFeedMessage=String(e?.message||e);
    teamFeedStatus='shared feed unreachable · cached lists retained';
-   render();
+   if(prior!=='error'||userInitiated)render();else wcf161RefreshFeedBadge();
    if(userInitiated)toast('Live team-list refresh unavailable. Previous verified statuses are unchanged.',true);
    return false;
   }finally{liveFeedInFlight=null;}
@@ -1248,17 +1264,16 @@ render();
 // The GitHub endpoint supports cross-origin reads, so there is no reason to skip local files.
 // The in-flight guard in syncTeamLists prevents duplicate requests from overlapping events.
 void syncTeamLists(false);
-setInterval(()=>void syncTeamLists(false),AUTO_FEED_INTERVAL_MS);
-// Browser tabs can be suspended on phones: check when the visitor returns.
-document.addEventListener('visibilitychange',()=>{
- if(document.visibilityState==='visible' && (!liveLastChecked || Date.now()-liveLastChecked.getTime()>=AUTO_FEED_INTERVAL_MS)){
-  void syncTeamLists(false);
- }
-});
-// Returning via the browser's back/forward cache is a page reopening, too.
-window.addEventListener('pageshow',event=>{
- if(event.persisted)void syncTeamLists(false);
-});
+// Poll only while the page is visible. GitHub's publisher may update at any time.
+setInterval(()=>{if(document.visibilityState==='visible')void syncTeamLists(false);},AUTO_FEED_INTERVAL_MS);
+// Refresh promptly on return (including mobile app/tab suspension) without duplicate requests.
+const wcf161OnReturn=()=>{
+ if(document.visibilityState==='visible'&&(!liveLastChecked||Date.now()-liveLastChecked.getTime()>=10000))void syncTeamLists(false);
+};
+document.addEventListener('visibilitychange',wcf161OnReturn);
+window.addEventListener('focus',wcf161OnReturn);
+window.addEventListener('online',wcf161OnReturn);
+window.addEventListener('pageshow',event=>{if(event.persisted)void syncTeamLists(false);});
 </script><style>/* World Cup Fantasy '26: V8 multiplayer status, auth and global ladder */
 .mp-bar{border:1px solid #346358;background:linear-gradient(120deg,#112c30,#16372f);border-radius:12px;display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 15px;margin:10px 0 13px;color:#effcf4;flex-wrap:wrap}
 .mp-bar-left{display:flex;align-items:center;gap:11px;min-width:240px}
@@ -3199,7 +3214,7 @@ render=function(){
   if(f)f.textContent='S · Select a blue-highlighted teammate to swap positions. Tap S again to cancel. No trade used.';
  }
  const footer=document.querySelector('.foot span:last-child');
- if(footer)footer.textContent='World Cup Fantasy V8.14.12 · Made by Big Jugs · Public competition';
+ if(footer)footer.textContent='World Cup Fantasy V8.14.16 · Made by Big Jugs · Public competition';
 };
 render();
 </script>
