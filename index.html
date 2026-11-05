@@ -3284,4 +3284,108 @@ render();
   if (typeof render === 'function') render();
 })();
 </script>
+<!-- World Cup Fantasy 2026 | R4 published team-list fallback | 5 Nov 2026
+     ADD ONLY BEFORE </body> in the CURRENT live index.html; do NOT replace current site.
+     Source: https://www.nrl.com/news/2026/11/03/world-cup-team-lists-mens-semi-finals/
+     Applies to men's Round 4 ONLY, never settlement, scoring, trading, or lockout.
+     Live feed is preferred when sufficiently complete per nation.
+-->
+<script id="wcf-r4-official-teamlists-fix">
+(() => {
+  'use strict';
+  if (window.__wcfR4TeamlistsFix) return;
+  if (typeof statusFor !== 'function' || typeof keyLegend !== 'function' ||
+      typeof wcf13Fixture !== 'function' || typeof wcf13KnockoutConfirmed !== 'function' ||
+      typeof wcf13 === 'undefined' || typeof P === 'undefined' ||
+      typeof teamListFeed === 'undefined' || typeof state === 'undefined') {
+    console.error('WCF R4 team-list fix: expected site functions not available.');
+    return;
+  }
+  // Official 1-22 squads. Numbers 1-13 = starting; 14-19 = interchange;
+  // 20+ = outside 19. Players not named are also outside 19.
+  const ROSTERS = {"NZL":["Keano Kini","Jamayne Isaako","Dane Gagai","Casey McLean","Charnze Nicoll-Klokstad","Kodi Nikorima","Jahrome Hughes","James Fisher-Harris","Jeremy Marshall-King","Moses Leota","Isaiah Papali'i","Briton Nikora","Joseph Tapine","Te Maire Martin","Naufahu Whyte","Erin Clark","Xavier Willison","Scott Sorensen","Leo Thompson","Tanner Stowers-Smith","Kalyn Ponga","Phoenix Crossland"],"TON":["Lehi Hopoate","Dallin Watene-Zelezniak","Tolutau Koula","Robert Toia","Jojo Fifita","Tuimoala Lolohea","Isaiya Katoa","Addin Fonua-Blake","Salesi Foketi","Jason Taumalolo","Haumole Olakau'atu","Siua Wong","Tyson Frizell","Soni Luke","Stefano Utoikamanu","Demitric Vaimauga","Taniela Paseka","Leka Halasima","Latu Fainu","Paul Alamoti","Kulikefu Finefeuiaki","Sione Katoa"],"AUS":["Reece Walsh","Jack Bostock","Kotoni Staggs","Bradman Best","Tom Trbojevic","Cameron Munster","Tom Dearden","Patrick Carrigan","Harry Grant","Tino Fa'asuamaleaui","Jacob Preston","Liam Martin","Isaah Yeo","Ethan Strange","Keaon Koloamatangi","Cameron Murray","Reuben Cotter","Latrell Mitchell","James Tedesco","Lindsay Smith","Sam Walker","Blayke Brailey"],"SAM":["Hamiso Tabuai-Fidow","Brian To'o","Izack Tago","Stephen Crichton","Sualauvi Fa'alogo","Ronald Volkman","Jarome Luai","Francis Molo","Benaiah Ioelu","Junior Paulo","Connelly Lemuelu","Jermaine McEwen","Francis Manuleleua","Jazz Tevaga","Spencer Leniu","Shawn Blore","Ata Mariota","Clayton Faulalo","Deine Mariner","Pasami Saulo","Enari Tuala","Eddie Ieremia-Toeava"]};
+  const SOURCE = 'https://www.nrl.com/news/2026/11/03/world-cup-team-lists-mens-semi-finals/';
+  const FIXTURE_PAIRS = ['NZL|TON', 'AUS|SAM'];
+  const NATIONS = Object.keys(ROSTERS);
+  const normal = s => String(s || '').normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  // NRL prints the full given name; the game uses the player's short name.
+  const names = { 'SAM|suafaalogo': 'sualauvifaalogo' };
+  const official = new Map();
+  for (const [nation, squad] of Object.entries(ROSTERS)) {
+    squad.forEach((name, index) => {
+      const code = index < 13 ? 'starting' : index < 19 ? 'interchange' : 'omitted';
+      const key = nation + '|' + normal(name);
+      if (official.has(key)) throw Error('Duplicate published list entry: ' + key);
+      official.set(key, code);
+    });
+  }
+  const coreStatusFor = statusFor;
+  const coreKeyLegend = keyLegend;
+  function actualKey(p) {
+    const key = p.nation + '|' + normal(p.name);
+    const name = names[key];
+    return name ? p.nation + '|' + name : key;
+  }
+  function confirmedDraw() {
+    if (!wcf13.loaded || !wcf13KnockoutConfirmed(4)) return false;
+    const games = wcf13.fixtures.filter(f => Number(f.round_number) === 4);
+    const pairs = games.map(f => [f.home_code, f.away_code].sort().join('|'));
+    return FIXTURE_PAIRS.every(pair => pairs.includes(pair));
+  }
+  function publishedFeedReadyForNation(nation) {
+    const statuses = teamListFeed?.rounds?.['4'];
+    if (!statuses) return false;
+    const expected = ROSTERS[nation].slice(0, 19).filter(name =>
+      P.some(p => p.nation === nation && actualKey(p) === nation + '|' + normal(name))
+    ).length;
+    // Prefer the automatic feed when it has almost all named market players.
+    // A small partial feed must NOT leave all other entries at TBC.
+    const selectedCount = P.filter(p => p.nation === nation &&
+      ['starting','interchange'].includes(statuses[p.id])).length;
+    return expected > 0 && selectedCount >= Math.max(12, expected - 2);
+  }
+  statusFor = function (player) {
+    if (Number(state.round) !== 4 || !confirmedDraw()) return coreStatusFor(player);
+    const game = wcf13Fixture(player.id, 4);
+    if (!game) return ['omitted', 'Outside 19 · nation eliminated; no semi-final fixture'];
+    const existing = coreStatusFor(player);
+    if (state.injured?.[player.id]) return existing; // Keep a manual injury flag.
+    if (publishedFeedReadyForNation(player.nation) && existing[0] !== 'unknown') return existing;
+    const decision = official.get(actualKey(player)) || 'omitted';
+    const labels = {
+      starting: 'Named in the official semi-final starting 13',
+      interchange: 'Named on the official semi-final interchange (14–19)',
+      omitted: 'Outside 19 · not in the official starting 13 or interchange (14–19)'
+    };
+    return [decision, labels[decision]];
+  };
+  keyLegend = function () {
+    let html = coreKeyLegend();
+    if (Number(state.round) !== 4 || !confirmedDraw()) return html;
+    const count = P.filter(p => statusFor(p)[0] !== 'unknown').length;
+    // Correct the old legend counter, which only counts external JSON entries.
+    html = html.replace(/R4: <b>\d+<\/b> verified statuses · updated [^.]*\./,
+      'R4: <b>' + count + '</b> selection statuses · official team lists published 3 Nov.');
+    const n = NATIONS.filter(x => !publishedFeedReadyForNation(x)).length;
+    const note = '<span class="wcf-r4-source-note" style="font-size:11px">' +
+      (n ? 'Round 4 official fallback (' + n + '/4 nations) · ' : 'Round 4 live feed complete · ') +
+      '<a target="_blank" rel="noopener noreferrer" href="' + SOURCE + '">NRL team lists ↗</a></span>';
+    return html.replace('<span class="feed-buttons">',note+'<span class="feed-buttons">');
+  };
+  window.__wcfR4TeamlistsFix = {
+    version: '2026-11-05',
+    audit() {
+      const counts = {starting:0,interchange:0,omitted:0,injured:0,unknown:0};
+      for (const p of P) {const s = statusFor(p)[0]; counts[s] = (counts[s] || 0) + 1;}
+      return {round:Number(state.round),drawConfirmed:confirmedDraw(),counts,
+        liveFeedNations:NATIONS.filter(publishedFeedReadyForNation),
+        sample:P.filter(p=>['Reece Walsh','Soni Luke','Kalyn Ponga','AJ Brimson'].includes(p.name))
+          .map(p=>({name:p.name,nation:p.nation,status:statusFor(p)[0]}))};
+    }
+  };
+  console.info('World Cup Fantasy: official R4 selection status fallback loaded.');
+  if (typeof render === 'function') render();
+})();
+</script>
 </body></html>
