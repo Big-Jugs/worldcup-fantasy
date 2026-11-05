@@ -3218,4 +3218,70 @@ render=function(){
 };
 render();
 </script>
+<!--
+  World Cup Fantasy 2026 — knockout retained-player edit and undo fix
+  Add immediately before </body> in the CURRENT production index.html.
+  Must come AFTER wcf-v81412-substitution-mode and wcf-v8149-atomic-trades.
+  Uses the pre-existing authoritative Supabase wcf_save_lineup RPC.
+  Does not change score settlement, wallets, prices, or lockout tables.
+-->
+<script id="wcf-ko-retained-player-undo-fix">
+(() => {
+  'use strict';
+  if (window.__wcfKoRetainedPlayerFix) return;
+  if (typeof wcf13PlayerIsLocked !== 'function' ||
+      typeof wcf13Fixture !== 'function' ||
+      typeof wcf13KnockoutConfirmed !== 'function' ||
+      typeof wcf149UndoTrade !== 'function' ||
+      typeof wcf149UndoCandidate !== 'function' ||
+      typeof lineup !== 'function') {
+    console.error('WCF knockout fix not installed: required game functions missing.');
+    return;
+  }
+
+  const priorLocked = wcf13PlayerIsLocked;
+  const priorUndo = wcf149UndoTrade;
+  let authorisedUndoRestore = null;
+
+  // A player with no fixture in a CONFIRMED knockout round is eliminated,
+  // not kicked off. Held players may move between eligible squad positions.
+  // A sold player may return ONLY during the existing Undo flow. Do not open
+  // the market to arbitrary acquisitions of players from eliminated teams.
+  function movableWithoutFixture(id, round, forAddition) {
+    const r = Number(round);
+    if (!id || (r !== 4 && r !== 5) || r !== Number(state.round)) return false;
+    if (!wcf13.loaded || !wcf13KnockoutConfirmed(r) || !byId[id]) return false;
+    if (wcf13Fixture(id, r)) return false; // Actual fixture: normal kickoff lock.
+    if (!forAddition) return true;          // Trading out remains available.
+    const held = lineup().slots.includes(id);
+    return held || id === authorisedUndoRestore;
+  }
+
+  wcf13PlayerIsLocked = function (id, round = state.round, forAddition = false) {
+    if (movableWithoutFixture(id, round, forAddition)) return false;
+    return priorLocked(id, round, forAddition);
+  };
+
+  // The existing Undo implementation checks an eliminated outgoing player as
+  // though restoring them were a NEW market purchase. Authorise precisely
+  // the candidate identified by that original Undo function, and only for
+  // the synchronous undo mutation. All normal position, salary, trade,
+  // captain, round and server-side checks continue to apply.
+  wcf149UndoTrade = function (index) {
+    const candidate = wcf149UndoCandidate(index);
+    const restoreId = candidate?.outId || null;
+    const old = authorisedUndoRestore;
+    authorisedUndoRestore = restoreId;
+    try {
+      return priorUndo(index);
+    } finally {
+      authorisedUndoRestore = old;
+    }
+  };
+
+  window.__wcfKoRetainedPlayerFix = true;
+  console.info('WCF knockout retained-player substitution and trade-undo fix loaded.');
+  if (typeof render === 'function') render();
+})();
+</script>
 </body></html>
