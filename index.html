@@ -3388,4 +3388,187 @@ render();
   if (typeof render === 'function') render();
 })();
 </script>
+<!-- World Cup Fantasy 2026 | Round 4 feed-row + player availability filter
+     ADD once immediately before the LAST </body> of the CURRENT live index.html.
+     Must follow the previous knockout and Round 4 team-list patches.
+     Presentation and player-market filtering only. No trading, lockout or save changes. -->
+<style id="wcf-availability-layout-fix-css">
+/* Isolate the NRL source note from the compact live-feed/refresh control row. */
+.wcf-r4-source-line {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 4px 3px;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.wcf-r4-source-line .wcf-r4-source-note {
+  display: inline;
+  white-space: normal;
+}
+/* The existing site uses a THREE-column CSS grid; give it a fourth
+   column only when the market panel has enough space. */
+.market-card { container-type: inline-size; }
+.market-card .market-controls { min-width: 0; grid-template-columns: minmax(0,1fr); }
+.market-controls .filters {
+  display: grid;
+  min-width: 0;
+  width: 100%;
+  grid-template-columns: minmax(90px,1.1fr) minmax(85px,.75fr)
+                         minmax(155px,1.5fr) minmax(100px,1fr);
+  gap: 5px;
+}
+.market-controls .filters #filterNation {
+  min-width: 0;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.market-controls .filters #filterAvailability {
+  min-width: 0;
+  padding-left: 7px;
+  padding-right: 7px;
+}
+/* Two unobstructed rows in the narrow My Team side panel and on mobile.
+   Left column = Position / Availability; right = narrower Nation / Sort. */
+@container (max-width: 520px) {
+  .market-controls .filters {
+    grid-template-columns: minmax(0,1.2fr) minmax(0,.8fr);
+  }
+  /* Let the EXISTING live-status badge and buttons share available space
+     rather than overlapping when the fourth dropdown narrows the panel. */
+  .market-controls .feed-row { flex-wrap: wrap; gap: 4px; }
+  .market-controls .feed-row .feed-explain {
+    flex: 1 1 100%;
+    min-width: 0;
+    white-space: normal;
+  }
+  .market-controls .feed-row .auto-source-note {
+    flex: 1 1 170px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+  .market-controls .feed-row .auto-feed-indicator {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .market-controls .feed-row .auto-feed-timestamp { white-space: normal; }
+  .market-controls .feed-row .feed-buttons { margin-left: auto; }
+}
+</style>
+<script id="wcf-availability-and-feed-layout-fix">
+(() => {
+  'use strict';
+  if (window.__wcfAvailabilityAndFeedFix) return;
+  if (typeof keyLegend !== 'function' || typeof marketArea !== 'function' ||
+      typeof render !== 'function' || typeof redrawMarket !== 'function' ||
+      typeof statusFor !== 'function' || typeof byId === 'undefined') {
+    console.error('WCF availability patch: expected site functions missing.');
+    return;
+  }
+
+  // Preserve the current key and all existing buttons. Move ONLY the R4 source
+  // notice from the overcrowded .feed-row to its own line underneath it.
+  const originalLegend = keyLegend;
+  keyLegend = function(...args) {
+    const html = originalLegend.apply(this, args);
+    const pattern = /<span class="wcf-r4-source-note"[^>]*>[\s\S]*?<\/span>/i;
+    const match = html.match(pattern);
+    if (!match) return html;  // Other rounds retain their existing layout.
+    return html.replace(pattern, '') +
+      '<div class="wcf-r4-source-line">' + match[0] + '</div>';
+  };
+
+  const OPTIONS = new Set(['ALL', 'SELECTED', 'STARTING', 'NOT_PLAYING']);
+  let availability = 'ALL';
+  const originalMarketArea = marketArea;
+  marketArea = function(...args) {
+    let html = originalMarketArea.apply(this, args);
+    if (html.includes('id="filterAvailability"')) return html;
+    const select = `<select class="select" id="filterAvailability" aria-label="Availability filter">
+      <option value="ALL"${availability==='ALL'?' selected':''}>All availabilities</option>
+      <option value="SELECTED"${availability==='SELECTED'?' selected':''}>Selected</option>
+      <option value="STARTING"${availability==='STARTING'?' selected':''}>Starting players only</option>
+      <option value="NOT_PLAYING"${availability==='NOT_PLAYING'?' selected':''}>Not playing</option>
+    </select>`;
+    // Exactly between Nations and 2026 Avg. Do not rebuild the market header.
+    const nationSelect = /<select\b(?=[^>]*\bid=["']filterNation["'])[^>]*>[\s\S]*?<\/select>/i;
+    return html.replace(nationSelect, found => found + select);
+  };
+
+  function eligibleForAvailability(player) {
+    if (availability === 'ALL') return true;
+    const code = statusFor(player)?.[0] || 'unknown';
+    if (availability === 'SELECTED') return code === 'starting' || code === 'interchange';
+    if (availability === 'STARTING') return code === 'starting';
+    if (availability === 'NOT_PLAYING') return code === 'omitted' || code === 'injured';
+    return true;
+  }
+
+  function applyFilter() {
+    const root = document.getElementById('marketResults');
+    if (!root) return;
+    root.querySelector('.wcf-availability-empty')?.remove();
+    const rows = [...root.querySelectorAll('.player')];
+    let visible = 0;
+    for (const row of rows) {
+      // Identify each row using the original player-profile button; do not
+      // modify row markup or any ADD/TRADE control.
+      const id = row.querySelector('[data-action="profile"][data-id]')?.dataset.id;
+      const show = availability === 'ALL' || (id && byId[id] && eligibleForAvailability(byId[id]));
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    }
+    if (availability !== 'ALL' && rows.length > 0 && visible === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state wcf-availability-empty';
+      empty.textContent = 'No players match this availability and the other filters.';
+      root.appendChild(empty);
+    }
+  }
+
+  // All existing rendering/refresh logic stays authoritative. Reapply only
+  // row visibility when a search, sort, round change or live team-list update
+  // recreates the market rows.
+  const originalRender = render;
+  render = function(...args) {
+    const result = originalRender.apply(this, args);
+    applyFilter();
+    return result;
+  };
+  const originalRedrawMarket = redrawMarket;
+  redrawMarket = function(...args) {
+    const result = originalRedrawMarket.apply(this, args);
+    applyFilter();
+    return result;
+  };
+
+  document.addEventListener('change', event => {
+    if (event.target?.id !== 'filterAvailability') return;
+    availability = OPTIONS.has(event.target.value) ? event.target.value : 'ALL';
+    applyFilter();
+  }, true);
+  // The existing Reset filters button already resets other dropdowns.
+  document.addEventListener('click', event => {
+    if (event.target?.closest('[data-action="clear-filters"]')) availability = 'ALL';
+  }, true);
+
+  window.__wcfAvailabilityAndFeedFix = {
+    version: '2026-11-05',
+    audit() {
+      const root = document.getElementById('marketResults');
+      const rows = [...(root?.querySelectorAll('.player') || [])];
+      return {
+        mode: availability,
+        dropdownPresent: !!document.getElementById('filterAvailability'),
+        sourceNoteInSeparateLine: !!document.querySelector('.wcf-r4-source-line .wcf-r4-source-note'),
+        visibleRows: rows.filter(row => row.style.display !== 'none').length,
+        totalRowsMatchingOtherFilters: rows.length
+      };
+    }
+  };
+  render();
+  console.info('WCF: availability filter and Round 4 source-line layout fix loaded.');
+})();
+</script>
 </body></html>
